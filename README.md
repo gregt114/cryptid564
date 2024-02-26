@@ -9,6 +9,7 @@
 - Purpose           : Obtain local/domain credentials + other sensitive files
 
 ## Obfuscation
-- LLVM-based (https://www.notion.so/564-Project-ab60d6ae785446b38acb27ce542f3fdc?pvs=4#3461fcc6625b4790a2c9a9623ee5e991)
+- LLVM-based (https://github.com/cainiao1992/ollvm-mingw)
 - Loader + decryptor
+- Lots of ideas here: https://book.hacktricks.xyz/windows-hardening/av-bypass
  
