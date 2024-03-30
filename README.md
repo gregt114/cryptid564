@@ -15,6 +15,10 @@
 - To run Jenkins, execute `java -jar /path/to/jenkins.war`
 - Now Jenkins should be running on port 8080
 
+# Running the Exploit
+- Run `python exploit.py <IP> <PORT> <PATH>` where IP and PORT represent the target Jenkins server and PATH is a local path to a groovy file to execute on the target
+    - Remember to change the IP and filename in the Groovy code
+
 ## Info
 - Target            : Windows 10
 - Initial Compromise: Jenkins Script Console RCE
