@@ -9,7 +9,7 @@ def handle_post():
         print("Received data:", data)
         print("Headers: ", request.headers)
         print("===============================")
-        return data.decode()
+        return request.cookies["data"]
     else:
         return "INVALID HTTP METHOD - ONLY POST ALLOWED"
 
