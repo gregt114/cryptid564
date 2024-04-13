@@ -1,15 +1,6 @@
-#include <windows.h>
-#include <stdlib.h>
-#include <malloc.h>
-#include <string.h>
-#include <shlwapi.h>
-#include <processthreadsapi.h>
-
 #include "c2_comms.h"
 
-#pragma comment(lib, "Shlwapi.lib")
-#pragma comment(lib, "Advapi32.lib")
-#pragma comment(lib, "Pathcch.lib")
+
 
 // Global heap handle
 HANDLE heap;
@@ -19,8 +10,7 @@ char pwd[MAX_PATH + 1] = {0};
  
 
 
-
-// cl implant.c  /Fe:implant.exe /DDEBUG -Zi /DEBUG
+// cl implant.c  /Fe:implant.exe /DDEBUG /DEBUG
 // cl implant.c /Fe:implant.exe
 int main() {
     int status = 0;

