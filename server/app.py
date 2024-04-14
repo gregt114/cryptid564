@@ -21,19 +21,25 @@ def strip_padding(decrypted: str):
 @app.route('/post', methods=['POST'])
 def handle_post():
     if request.method == 'POST':
+        # For some reason we need two separate ciphers
+        cipher_dec = AES.new(KEY, AES.MODE_CBC, iv=IV)
+        cipher_enc = AES.new(KEY, AES.MODE_CBC, iv=IV)
+
         data = request.data
         cookie = request.cookies["data"]
         encrypted = b64decode(cookie)
-        decrypted = cipher.decrypt(encrypted)
-        decrypted = strip_padding(decrypted)
+        decrypted = cipher_dec.decrypt(encrypted)
+        message = strip_padding(decrypted)
         
         print("Received data     : ", data)
         print("Received cookie   : ", cookie)
         print("Base64 Decoded    : ", encrypted)
         print("Decrypted         : ", decrypted)
-        print("Decrypted Len     : ", len(decrypted))
-        
-        return request.cookies["data"]
+        print("Message           : ", message)
+
+        response = cipher_enc.encrypt(decrypted)
+        response = b64encode(response)
+        return response
     else:
         return "INVALID HTTP METHOD - ONLY POST ALLOWED"
 

