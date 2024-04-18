@@ -1,102 +1,43 @@
 import socket
+from dns import message, name
+from dns.rdatatype import TXT
+from dns.rdataclass import IN
+from dns.rrset import RRset
 
 
 """
-Generates a DNS TXT reply.
-tid   : 2 byte integer representing the transaction ID. Obtained from the request.
-domain: the domain name the query was made for. Obtained from the request.
-msg   : the contents of the TXT record to send back
-proto : Either "UDP" or "TCP"
+Returns bytes of DNS reply for the given request using msg as the TXT record data.
+request: bytes of DNS query on the wire
+msg    : the data to put in the TXT record
+proto  : "UDP" or "TCP"
 """
-def gen_reply(tid, domain, msg, proto):
+def gen_reply(request, msg, proto):
 
-    if proto == "UDP":
-        # DNS header
-        header = b"\x81\x80" # standary query response, no error
-        header += b"\x00\x01" # num queries
-        header += b"\x00\x01" # num answers
-        header += b"\x00\x00" # num authoritative
-        header += b"\x00\x00" # num additional
+    query = message.from_wire(request) if proto == "UDP" else message.from_wire(request[2:])
+    response = message.make_response(query)
 
-        # Query
-        query = b"\x06"
-        query += domain + b"\x00"
-        query += b"\x00\x10" # Type TXT
-        query += b"\x00\x01" # Class IN
-
-        # TXT record
-        record = b"\xc0\x0c"  # refers to domain name?
-        record += b"\x00\x10" # Type TXT
-        record += b"\x00\x01" # Class IN
-        record += b"\x00\x00\x00\x00" # TTL = 0 min, 0 sec
-
-        # Data length, 2 bytes long. Length of all TXT records combined.
-        # Each RR has its own 1-byte length field, so since we have 1 RR the total length is 1 + len(RR) 
-        record += (1 + len(msg)).to_bytes(2, byteorder="big")
-        record += len(msg).to_bytes(1, byteorder="big") # TXT length, 1 byte
-        record += msg
-
-        packet = tid.to_bytes(2, byteorder="big") + header + query + record
-        return packet
-
-    elif proto == "TCP":
-        # DNS header
-        header = b"\x81\x80" # standary query response, no error
-        header += b"\x00\x01" # num queries
-        header += b"\x00\x01" # num answers
-        header += b"\x00\x00" # num authoritative
-        header += b"\x00\x00" # num additional
-
-        # Query
-        query = b"\x06"
-        query += domain + b"\x00"
-        query += b"\x00\x10" # Type TXT
-        query += b"\x00\x01" # Class IN
-
-        # TXT record
-        record = b"\xc0\x0c"  # refers to domain name?
-        record += b"\x00\x10" # Type TXT
-        record += b"\x00\x01" # Class IN
-        record += b"\x00\x00\x00\x00" # TTL = 0 min, 0 sec
-
-        # Data length, 2 bytes long. Length of all TXT records combined.
-        # Each RR has its own 1-byte length field, so since we have 1 RR the total length is 1 + len(RR) 
-        record += (1 + len(msg)).to_bytes(2, byteorder="big")
-        record += len(msg).to_bytes(1, byteorder="big") # TXT length, 1 byte
-        record += msg
-
-        # TCP DNS packets start with 2-byte length field rather than TID
-        packet = tid.to_bytes(2, byteorder="big") + header + query + record
-        packet = len(packet).to_bytes(2, byteorder="big") + packet
-        return packet
-
-
-"""
-Parses a generic DNS request. Returns transaction ID and domain name.
-data : the raw bytes of the DNS request.
-proto: either "UDP" or "TCP"
-"""
-def parse_query(data, proto):
-
-    if proto == "UDP":
-        # Parse query ID
-        tid = int.from_bytes(data[0:2], byteorder="big")
-
-        # Parse domain out
-        # Note: For some reason in query, \x03 is used instead of "."
-        domain_bytes = data[13: data.find(b"\x00", 13)]
-        return (tid, domain_bytes)
+    label = name.from_text(msg)
+    record = RRset(label, rdclass=IN, rdtype=TXT)
+    response.answer.append(record)
     
-    elif proto == "TCP":
-        tid = int.from_bytes(data[2:4], byteorder="big")
-        domain_bytes = data[15: data.find(b"\x00", 15)]
-        return (tid, domain_bytes)
+    # The library is stupid and won't make the actual RR bytes, so need to cut off the last two bytes of 
+    # their data and append our own data onto the end
+    res = response.to_wire()
+    res = res[0:-2] + (len(msg) + 1).to_bytes(2, byteorder="big") + len(msg).to_bytes(1, byteorder="big") + msg.encode()
+
+    # TCP DNS packets start with 2 byte length field
+    if proto == "TCP":
+        res = len(res).to_bytes(2, byteorder="big") + res 
+
+    return res
+
+    
 
 
 
 
 IP = "0.0.0.0"
-PORT = 53
+PORT = 4444
 PROTO = "UDP"
 
 if PROTO == "UDP":
@@ -106,28 +47,21 @@ if PROTO == "UDP":
     while True:
         # Recv data
         data, addr = sock.recvfrom(1024)
-        ip, port = addr
 
-        # Parse request
-        tid, domain = parse_query(data, PROTO)
-
-        resp = gen_reply(tid, domain, b"testing123", PROTO)
+        resp = gen_reply(data, "testMessage123", PROTO)
         sock.sendto(resp, addr)
 
-elif PROTO == "TCP":
+if PROTO == "TCP":
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind((IP, PORT))
-    sock.listen(3)
+    sock.listen(2)
     print(f"TCP {IP}:{PORT}")
 
     while True:
-        # Recv data
         conn, addr = sock.accept()
+    
         data = conn.recv(1024)
 
-        # Parse request
-        tid, domain = parse_query(data, PROTO)
-
-        resp = gen_reply(tid, domain, b"testing123", PROTO)
+        resp = gen_reply(data, "testMessage123", PROTO)
         conn.send(resp)
         conn.close()
