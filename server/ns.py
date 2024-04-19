@@ -24,7 +24,7 @@ def gen_dns_reply(request, msg, proto):
     query = message.from_wire(request) if proto == "UDP" else message.from_wire(request[2:])
     response = message.make_response(query)
 
-    label = name.from_text(msg)
+    label = query.question[0].name
     record = RRset(label, rdclass=IN, rdtype=TXT)
     response.answer.append(record)
     

