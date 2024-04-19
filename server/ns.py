@@ -24,7 +24,9 @@ def gen_dns_reply(request, msg, proto):
     query = message.from_wire(request) if proto == "UDP" else message.from_wire(request[2:])
     response = message.make_response(query)
 
-    label = query.question[0].name
+    # We can save space in the response packet by putting a bogus domain name in the reply instead of the real domain name
+    # label = query.question[0].name    # how we would get the real domain name
+    label = name.from_text("TeamCryptid.com")
     record = RRset(label, rdclass=IN, rdtype=TXT)
     response.answer.append(record)
     
@@ -61,10 +63,17 @@ def main(IP, PORT, PROTO):
 
         while True:
             conn, addr = sock.accept()
-        
             data = conn.recv(1024)
 
-            resp = gen_dns_reply(data, "testMessage123", PROTO)
+            # Parse data
+            received_msg = message.from_wire(data[2:])
+            print("RECV: ", received_msg.question[0].name.to_text())
+
+            # Generate response
+            msg = input("> ")
+            resp = gen_dns_reply(data, msg, PROTO)
+
+
             conn.send(resp)
             conn.close()
 
