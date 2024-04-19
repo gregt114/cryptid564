@@ -29,6 +29,8 @@ int main() {
     heap = GetProcessHeap();
 
 
+
+
     // Test send cookie data
     // char* data = "!text to base64 encode!";
     // len = c2_send(data, strlen(data));

