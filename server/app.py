@@ -1,5 +1,6 @@
 from flask import Flask, request
 from Cryptodome.Cipher import AES   # pip install pycryptodomex
+from Cryptodome.Util.Padding import pad, unpad
 from base64 import b64encode, b64decode
 
 app = Flask(__name__)
@@ -29,7 +30,7 @@ def handle_post():
         cookie = request.cookies["data"]
         encrypted = b64decode(cookie)
         decrypted = cipher_dec.decrypt(encrypted)
-        message = strip_padding(decrypted)
+        message = unpad(decrypted, 16)
         
         print("Received data     : ", data)
         print("Received cookie   : ", cookie)
@@ -37,6 +38,7 @@ def handle_post():
         print("Decrypted         : ", decrypted)
         print("Message           : ", message)
 
+        # TODO get user input
         response = cipher_enc.encrypt(decrypted)
         response = b64encode(response)
         return response

@@ -6,7 +6,7 @@ import time
 
 # Crypto
 from Cryptodome.Cipher import AES   # "pip install pycryptodomex" if pycryptodome doesn't work
-from Cryptodome.Util.Padding import pad
+from Cryptodome.Util.Padding import pad, unpad
 from base64 import b64encode, b64decode
 
 # DNS
@@ -63,6 +63,9 @@ def main(IP, PORT):
     while True:
         data = ""
         sock.settimeout(1)
+
+        cipher_dec = AES.new(KEY, AES.MODE_CBC, iv=IV)
+        cipher_enc = AES.new(KEY, AES.MODE_CBC, iv=IV)
         
         while True:
             # Accept connection
@@ -78,13 +81,16 @@ def main(IP, PORT):
             name = query.question[0].name.to_text()[:-5] # remove .com. at end
             data += name
 
-            # Send reply
+            # Send reply (TODO encrypt)
             resp = gen_dns_reply(buffer, "THANKS", "TCP")
             conn.send(resp)
             conn.close()
 
         if data != "":
-            print(f"RECV:\n{data}\n")
+            enc_bytes = bytes.fromhex(data)
+            dec_bytes = cipher_dec.decrypt(enc_bytes)
+            dec_bytes = unpad(dec_bytes, 16)
+            print(f"RECV:\n{dec_bytes}\n")
 
 
 
