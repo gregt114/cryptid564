@@ -15,15 +15,7 @@ from dns.rdataclass import IN
 from dns.rrset import RRset
 
 
-DNS_TIMEOUT = 10    # Found by manually timing
-
-THREADS = []        # List of (thread, socket) tuples
-THREAD_LOCK = threading.Lock()
-
-MSG = ""
-MSG_READY = 0
-MSG_LOCK = threading.Lock()
-
+THREADS = []
 
 """
 Returns bytes of DNS reply for the given request using msg as the TXT record data.
@@ -54,103 +46,53 @@ def gen_dns_reply(request, msg, proto):
     return res
 
 
-
+# Just reads data until there is no more, prints data received
 def thread_handler(arg):
-    global MSG, MSG_READY, MSG_LOCK
     conn = arg
-    
-    # Get data
-    data = conn.recv(1024)
+    conn.settimeout(1)
 
-    # Check if message is ready twice per second. If after 9 seconds message 
-    # is not ready, send default response
-    start = time.time()
-    while time.time() - start < 9:
-        msg_ready = 0
-        with MSG_LOCK:
-            msg_ready = MSG_READY
-        
-        if msg_ready == 1:
-            response = gen_dns_reply(data, MSG, "TCP")
-            conn.send(response)
-            conn.close()
-            return
-        else:
-            time.sleep(0.5)
-            continue
+    data = ""
+    try:
+        while True:
+            buffer = conn.recv(1024)
+            query = message.from_wire(buffer[2:]) # strip off fist 2 bytes due to TCP format
+            data += query.question[0].name.to_text()
+    except TimeoutError:
+        print(f"RECV:\n{data}\n")
 
-    # 10 seconds have passed and message not ready
-    response = gen_dns_reply(data, "NOP", "TCP")
-    conn.send(response)
-    conn.close()
+    resp = gen_dns_reply(buffer, "THANKS", "TCP")
+    conn.send(resp)
+
     return
-    
 
-# Handles accepting new connections
-def socket_handler(arg):
+
+
+def main(IP, PORT):
     global THREADS
-    sock = arg
 
-    sock.listen(2)
+    # Socket setup
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind((IP, PORT))
+    sock.listen(3)
+    print(f"TCP {IP}:{PORT}")
+
 
     while True:
         # Accept connection
         conn, addr = sock.accept()
         t = threading.Thread(target=thread_handler, args=(conn,))
         t.start()
-
-        # Add to thread list
-        THREAD_LOCK.acquire()
         THREADS.append((t, conn))
-        THREAD_LOCK.release()
-
-
-
-def main(IP, PORT, PROTO):
-    global MSG, MSG_READY, MSG_LOCK
-    global THREADS, THREAD_LOCK
-
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind((IP, PORT))
-    print(f"{PROTO} {IP}:{PORT}")
-
-    # Start network thread.
-    # While input is blocking, we should still accept new connections 
-    network_thread = threading.Thread(target=socket_handler, args=(sock,))
-    network_thread.start()
-
-    while True:
         
-        # We lock MSG_READY instead of MSG since getting user-input is blocking,
-        # meaning no other thread will be able to access MSG while the user decides what
-        # to type. Immediately after getting input, we set MSG_READY to 1 to let other threads
-        # know that MSG has been recently updated and can now be accessed
-        MSG_LOCK.acquire()
-        MSG_READY = 0
-        MSG_LOCK.release()
-
-        # User input
-        MSG = input("> ")
-
-        MSG_LOCK.acquire()
-        MSG_READY = 1
-        MSG_LOCK.release()
-        
-
-        # Join all dead threads
-        THREAD_LOCK.acquire()
+        # Remove dead threads
         tmp = [pair for pair in THREADS if pair[0].is_alive()] # make copy of list since can't remove items while iterating
         for pair in THREADS:
             t, s = pair
             if not t.is_alive():
+                s.close()
                 t.join()
-                print(f"Joined {t.ident}")
         THREADS = tmp
-        THREAD_LOCK.release()
 
-        # Give time so other threads can get MSG_LOCK
-        time.sleep(0.5)
-        
 
 
 
@@ -161,14 +103,10 @@ if __name__ == "__main__":
         print(f"Usage: python {sys.argv[0]} [IP] [PORT]")
         print("IP   :  Address of interface to listen on")
         print("PORT :  Port to listen on")
-        #print("PROTO:  Protocol to use - UDP or TCP")
         exit(0)
 
-    
     # Parse args
     ip = sys.argv[1]
     port = int(sys.argv[2])
-    #proto = sys.argv[3].upper()
-    proto = "TCP"
 
-    main(ip, port, proto)
+    main(ip, port)

