@@ -6,6 +6,7 @@ import time
 
 # Crypto
 from Cryptodome.Cipher import AES   # "pip install pycryptodomex" if pycryptodome doesn't work
+from Cryptodome.Util.Padding import pad
 from base64 import b64encode, b64decode
 
 # DNS
@@ -15,7 +16,10 @@ from dns.rdataclass import IN
 from dns.rrset import RRset
 
 
-THREADS = []
+KEY = b"A"*16
+IV = b"A"*16
+cipher = AES.new(KEY, AES.MODE_CBC, iv=IV)
+
 
 """
 Returns bytes of DNS reply for the given request using msg as the TXT record data.
@@ -46,30 +50,9 @@ def gen_dns_reply(request, msg, proto):
     return res
 
 
-# Just reads data until there is no more, prints data received
-def thread_handler(arg):
-    conn = arg
-    conn.settimeout(1)
-
-    data = ""
-    try:
-        while True:
-            buffer = conn.recv(1024)
-            query = message.from_wire(buffer[2:]) # strip off fist 2 bytes due to TCP format
-            data += query.question[0].name.to_text()
-    except TimeoutError:
-        print(f"RECV:\n{data}\n")
-
-    resp = gen_dns_reply(buffer, "THANKS", "TCP")
-    conn.send(resp)
-
-    return
-
 
 
 def main(IP, PORT):
-    global THREADS
-
     # Socket setup
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind((IP, PORT))
@@ -78,20 +61,30 @@ def main(IP, PORT):
 
 
     while True:
-        # Accept connection
-        conn, addr = sock.accept()
-        t = threading.Thread(target=thread_handler, args=(conn,))
-        t.start()
-        THREADS.append((t, conn))
+        data = ""
+        sock.settimeout(1)
         
-        # Remove dead threads
-        tmp = [pair for pair in THREADS if pair[0].is_alive()] # make copy of list since can't remove items while iterating
-        for pair in THREADS:
-            t, s = pair
-            if not t.is_alive():
-                s.close()
-                t.join()
-        THREADS = tmp
+        while True:
+            # Accept connection
+            try:
+                conn, addr = sock.accept()
+                conn.settimeout(None)
+            except:
+                break
+
+            # Recv data
+            buffer = conn.recv(1024)
+            query = message.from_wire(buffer[2:])        # strip off fist 2 bytes due to TCP format
+            name = query.question[0].name.to_text()[:-5] # remove .com. at end
+            data += name
+
+            # Send reply
+            resp = gen_dns_reply(buffer, "THANKS", "TCP")
+            conn.send(resp)
+            conn.close()
+
+        if data != "":
+            print(f"RECV:\n{data}\n")
 
 
 
