@@ -4,6 +4,7 @@ from Cryptodome.Util.Padding import pad, unpad
 from base64 import b64encode, b64decode
 
 app = Flask(__name__)
+app.config['SERVER_TIMEOUT'] = None
 
 KEY = b"A"*16
 IV = b"A"*16
@@ -39,7 +40,8 @@ def handle_post():
         print("Message           : ", message)
 
         # TODO get user input
-        response = cipher_enc.encrypt(decrypted)
+        user_input = input("> ").encode()
+        response = cipher_enc.encrypt(pad(user_input, 16))
         response = b64encode(response)
         return response
     else:

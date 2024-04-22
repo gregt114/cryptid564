@@ -81,8 +81,8 @@ def main(IP, PORT):
             name = query.question[0].name.to_text()[:-5] # remove .com. at end
             data += name
 
-            # Send reply (TODO encrypt)
-            resp = gen_dns_reply(buffer, "THANKS", "TCP")
+            # Send reply (we don't need to encrypt since the client doesnt need any information, so send bogus data)
+            resp = gen_dns_reply(buffer, "webexdomainverification.e3e6-4a36-904e-a805c28087fa", "TCP")
             conn.send(resp)
             conn.close()
 
