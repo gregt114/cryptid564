@@ -33,14 +33,18 @@ def handle_post():
         decrypted = cipher_dec.decrypt(encrypted)
         message = unpad(decrypted, 16)
         
-        print("Received data     : ", data)
-        print("Received cookie   : ", cookie)
-        print("Base64 Decoded    : ", encrypted)
-        print("Decrypted         : ", decrypted)
+        # print("Received data     : ", data)
+        # print("Received cookie   : ", cookie)
+        # print("Base64 Decoded    : ", encrypted)
+        # print("Decrypted         : ", decrypted)
         print("Message           : ", message)
 
-        # TODO get user input
-        user_input = input("> ").encode()
+        # Get user input.
+        # We loop here to prevent us from trying to send blank messages
+        user_input = b""
+        while len(user_input) == 0:
+            user_input = input("> ").encode()
+
         response = cipher_enc.encrypt(pad(user_input, 16))
         response = b64encode(response)
         return response
