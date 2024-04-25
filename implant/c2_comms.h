@@ -28,6 +28,7 @@
 #include <bcrypt.h>
 #include <windns.h>
 #include <processthreadsapi.h>
+#include <Psapi.h>
 
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "Shlwapi.lib")
