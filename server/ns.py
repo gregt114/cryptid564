@@ -82,6 +82,7 @@ def main(IP, PORT):
             data += name
 
             # Send reply (we don't need to encrypt since the client doesnt need any information, so send bogus data)
+            # TODO maybe randomize the text record a little
             resp = gen_dns_reply(buffer, "webexdomainverification.e3e6-4a36-904e-a805c28087fa", "TCP")
             conn.send(resp)
             conn.close()

