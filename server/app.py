@@ -3,6 +3,8 @@ from Cryptodome.Cipher import AES   # pip install pycryptodomex
 from Cryptodome.Util.Padding import pad, unpad
 from base64 import b64encode, b64decode
 
+import os
+
 app = Flask(__name__)
 app.config['SERVER_TIMEOUT'] = None
 
@@ -37,13 +39,17 @@ def handle_post():
         # print("Received cookie   : ", cookie)
         # print("Base64 Decoded    : ", encrypted)
         # print("Decrypted         : ", decrypted)
-        print("Message           : ", message)
+        print("Message           : ", message.decode("utf8"))
 
         # Get user input.
         # We loop here to prevent us from trying to send blank messages
         user_input = b""
         while len(user_input) == 0:
             user_input = input("> ").encode()
+            if user_input == b"clear":
+                os.system("clear")
+                user_input = b""
+
 
         response = cipher_enc.encrypt(pad(user_input, 16))
         response = b64encode(response)
