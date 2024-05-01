@@ -11,15 +11,23 @@
 ## Setup vulnerable windows VM
 - Install Windows 10 VM
 - Disable Windows firewall
-- Set the following registry values at HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows NT\Printers\PointAndPrint:
+- Set the following registry values at `HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows NT\Printers\PointAndPrint`:
     - RestrictDriverInstallationToAdministrators    REG_DWORD    0x0
     - NoWarningNoElevationOnInstall                 REG_DWORD    0x1
 - Donwload and install JDK 11 from https://aka.ms/download-jdk/microsoft-jdk-11.0.22-windows-x64.msi
-    - Make sure to enable the option to add JAVA_HOME to the PATH
+    - Make sure to enable the option to add `JAVA_HOME` to the PATH
     - You can run `java --version` in the Windows Command prompt to see if it installed properly
 - Download vulnerable Jenkins version from https://get.jenkins.io/war/1.625/
 - To run Jenkins, execute `java -jar /path/to/jenkins.war`
 - Now Jenkins should be running on port 8080
+
+## Building the Implant
+- `cd` into the `implant/` directory and run `cl implant.c /Os /Fe:implant.exe /Zi`
+- Run the Alcatraz obfuscator on the implant (https://github.com/weak1337/Alcatraz)
+    - Note: Do this in a VM to be safe since Defender flags Alcatraz as malware.
+    - You will need to copy all of the geneated files over(`.pdb, .ilk, .exe` etc...)
+    - In Alcatraz obfuscate all functions, and ensure entrypoint obfuscation is checked
+    - This produces `implant.obfs.exe`, which is the final version
 
 ## Running the Exploit
 - Generate serialized java payload: https://github.com/frohoff/ysoserial
@@ -34,10 +42,15 @@
     - https://github.com/gquere/pwn_jenkins
 
 ## TODO
-- Obfuscation
-    - Virtual instruction based: https://github.com/JonathanSalwan/Tigress_protection/tree/master
-    - Loader + decryptor / packing
-    - Lots of ideas here: https://book.hacktricks.xyz/windows-hardening/av-bypass
-- Remove / comment out debugging print statements
 - Max size for file writes is 100 Kb - increase this?
- 
+
+## Future Improvements
+- Use HTTPS rather than HTTP
+    - Don't need to implement encryption ourselves
+- Do C2 over DNS and exfil over HTTPS instead (synchronization issues)
+    - Much higher exfiltration bandwidth
+- Write a custom packer to make reversing even harder
+- Use a custom payload for printer nightmare
+    - The built-in payload is flagged when host is connected to the internet
+- Delete binary after exit
+    - Could be done via the backdoor

