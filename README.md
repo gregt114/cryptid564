@@ -50,7 +50,10 @@
 - Do C2 over DNS and exfil over HTTPS instead (synchronization issues)
     - Much higher exfiltration bandwidth
 - Write a custom packer to make reversing even harder
+    - Tried using UPX, got flagged instantly
 - Use a custom payload for printer nightmare
     - The built-in payload is flagged when host is connected to the internet
-- Delete binary after exit
-    - Could be done via the backdoor
+- Delete binary after exit more stealithly
+    - Instead of spawning cmd, maybe spawn a different process and create a remote thread
+- String obfuscation
+    - Can get useful data from strings in binary

