@@ -374,8 +374,8 @@ void DeleteSelf() {
 
 
 
-// cl implant.c /Fe:implant.exe /DDEBUG /DEBUG /Zi
-// cl implant.c /Os /Fe:implant.exe /Zi
+// Debug build: cl implant.c /Fe:implant.exe /DDEBUG /DEBUG /Zi
+// Final build: cl implant.c /Os /Fe:implant.exe /Zi
 int main() {
     int status = 0;
     unsigned int len = 0;

