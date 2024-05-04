@@ -94,7 +94,7 @@ def main(IP, PORT):
             dec_bytes = cipher_dec.decrypt(enc_bytes)
             dec_bytes = unpad(dec_bytes, 16)
 
-            with open(f"file{file_id}", "wb") as fd:
+            with open(f"data/file{file_id}", "wb") as fd:
                 fd.write(dec_bytes)
             print(f"Recieved file{file_id}")
             file_id += 1
